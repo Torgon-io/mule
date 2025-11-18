@@ -1,10 +1,28 @@
 import { z } from "npm:zod@^4.1.12";
+import { AIService } from "./ai.ts";
+import type { Logger, LLMCallLog, MuleOptions } from "./types.ts";
+
+// Re-export types for convenience
+export type { Logger, LLMCallLog, MuleOptions };
+
+/**
+ * Console logger implementation
+ */
+export class ConsoleLogger implements Logger {
+  async log(data: LLMCallLog): Promise<void> {
+    console.log("[Mule LLM Call]", JSON.stringify(data, null, 2));
+  }
+}
 
 type Step<TInput, TOutput, TState, TId extends string = string> = {
   id: TId;
   outputSchema: { parse: (data: unknown) => TOutput };
   inputSchema: { parse: (data: unknown) => TInput };
-  executor: (data: { input: TInput; state: TState }) => Promise<TOutput>;
+  executor: (data: {
+    input: TInput;
+    state: TState;
+    ai: AIService;
+  }) => Promise<TOutput>;
   onError?: (
     error: Error,
     data: { input: TInput; state: TState }
@@ -23,6 +41,7 @@ function createStep<
   executor: (data: {
     input: z.infer<TInputSchema>;
     state: TState;
+    ai: AIService;
   }) => Promise<z.infer<TOutputSchema>>;
   onError?: (
     error: Error,
@@ -39,12 +58,15 @@ function createStep<
 }
 
 class Workflow<TCurrentOutput = undefined> {
+  id: string = "";
   state: Record<string, any> = {};
   lastOutput: any = null;
   inputSchema: z.ZodTypeAny;
   private steps: Array<() => Promise<void>> = [];
   runId: string = "";
   readonly workflowId: string;
+  projectId: string = "unknown";
+  logger: Logger | null = null;
 
   constructor(
     workflowId: string,
@@ -74,7 +96,10 @@ class Workflow<TCurrentOutput = undefined> {
     return this as any as Workflow<TOutput>;
   }
 
-  async run(runId: string = "", initialInput?: TCurrentOutput): Promise<TCurrentOutput> {
+  async run(
+    runId: string = "",
+    initialInput?: TCurrentOutput
+  ): Promise<TCurrentOutput> {
     this.runId = runId || crypto.randomUUID();
     if (initialInput !== undefined) {
       this.lastOutput = initialInput;
@@ -143,10 +168,26 @@ class Workflow<TCurrentOutput = undefined> {
     try {
       if (step instanceof Workflow) {
         step.state = this.state;
-        const output = await step.run(`${this.runId}->${step.workflowId}`, input);
+        // Nested workflow inherits parent config
+        step.projectId = this.projectId;
+        step.logger = this.logger;
+        const output = await step.run(
+          `${this.runId}->${step.workflowId}`,
+          input
+        );
         return output;
       }
-      const output = await step.executor({ input, state: this.state });
+      const output = await step.executor({
+        input,
+        state: this.state,
+        ai: new AIService({
+          projectId: this.projectId,
+          workflowId: this.workflowId,
+          runId: this.runId,
+          stepId: step.id,
+          logger: this.logger,
+        }),
+      });
       return output;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -166,19 +207,66 @@ class Workflow<TCurrentOutput = undefined> {
   }
 }
 
-function createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(
-  state?: Record<string, unknown>,
-  inputSchema?: TInputSchema
-): Workflow<z.infer<TInputSchema>> {
-  const workflowId = crypto.randomUUID();
-  const finalState = state || {};
-  const finalInputSchema = (inputSchema || z.undefined()) as TInputSchema;
-  return new Workflow<z.infer<TInputSchema>>(workflowId, finalState, finalInputSchema);
+/**
+ * Main Mule class for project-level configuration
+ */
+class Mule {
+  private projectId: string;
+  private logger: Logger;
+  private loggingEnabled: boolean;
+
+  constructor(projectId?: string, options?: MuleOptions) {
+    this.projectId = projectId || Deno.env.get("MULE_PROJECT_ID") || "unknown";
+
+    if (this.projectId === "unknown") {
+      console.warn(
+        "[Mule] No projectId provided. Set MULE_PROJECT_ID or pass to constructor."
+      );
+    }
+
+    this.loggingEnabled = options?.logging?.enabled ?? true;
+    this.logger = options?.logging?.logger ?? new ConsoleLogger();
+  }
+
+  createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(params: {
+    state?: Record<string, unknown>;
+    inputSchema?: TInputSchema;
+    id?: string;
+  }): Workflow<z.infer<TInputSchema>> {
+    const workflowId = params.id || crypto.randomUUID();
+    const workflow = new Workflow<z.infer<TInputSchema>>(
+      workflowId,
+      params.state || {},
+      params.inputSchema || (z.undefined() as TInputSchema)
+    );
+
+    // Inject configuration
+    workflow.projectId = this.projectId;
+    workflow.logger = this.loggingEnabled ? this.logger : null;
+
+    return workflow;
+  }
 }
 
-export { createStep, createWorkflow, Workflow };
+function createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(
+  state?: Record<string, unknown>,
+  inputSchema?: TInputSchema,
+  id?: string
+): Workflow<z.infer<TInputSchema>> {
+  console.warn(
+    "[Mule] Using createWorkflow() without Mule instance is deprecated. " +
+      "Use: const mule = new Mule('projectId'); const workflow = mule.createWorkflow();"
+  );
+
+  // Use default Mule instance
+  const defaultMule = new Mule();
+  return defaultMule.createWorkflow({ state, inputSchema, id });
+}
+
+export { createStep, createWorkflow, Workflow, Mule };
 
 export default {
   createStep,
   createWorkflow,
+  Mule,
 };

@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **@torgon/mule** is a minimal, type-safe workflow engine for Deno that supports sequential, parallel, and conditional (branch) step execution. The library provides a fluent API for building workflows with automatic output chaining between steps, Zod schema validation, and state management.
 
+## Workflow for New Features
+
+**IMPORTANT**: Before starting work on any new feature:
+
+1. Check if a feature document exists in the [docs/](docs/) directory
+2. If a document exists, review it to understand the requirements
+3. If the feature requirements are not completely obvious, verify with the user that you're implementing the correct feature based on the documentation
+4. If no feature document exists, ask the user if they would like you to generate one before proceeding with implementation
+
+This ensures we maintain proper documentation and avoid implementing the wrong feature.
+
 ## Development Commands
 
 ### Running Tests

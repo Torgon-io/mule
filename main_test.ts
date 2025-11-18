@@ -1,6 +1,6 @@
-import { assertEquals } from "@std/assert";
-import { Workflow, createStep, createWorkflow } from "./main.ts";
-import { z } from "jsr:@zod/zod";
+import { assertEquals, assertExists } from "@std/assert";
+import { Workflow, createStep, createWorkflow, Mule, Logger, LLMCallLog } from "./main.ts";
+import { z } from "npm:zod@^4.1.12";
 
 Deno.test("Workflow - single step execution", async () => {
   const step1 = createStep({
@@ -12,7 +12,7 @@ Deno.test("Workflow - single step execution", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow.addStep(step1).run();
 
   assertEquals(result, "Hello, World!");
@@ -37,7 +37,7 @@ Deno.test("Workflow - sequential steps", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow.addStep(step1).addStep(step2).run();
 
   assertEquals(result, 4);
@@ -71,7 +71,7 @@ Deno.test("Workflow - parallel execution", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow.addStep(step1).parallel([step2, step3]).run();
 
   assertEquals(result, { step2: 5, step3: 10 });
@@ -97,7 +97,7 @@ Deno.test("Workflow - state management", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow.addStep(step1).addStep(step2).run();
 
   assertEquals(result, 11);
@@ -132,7 +132,7 @@ Deno.test("Workflow - branch with single condition true", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow
     .addStep(initialStep)
     .branch([
@@ -172,7 +172,7 @@ Deno.test("Workflow - branch with multiple conditions true", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow
     .addStep(initialStep)
     .branch([
@@ -215,7 +215,7 @@ Deno.test("Workflow - branch with no conditions true", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow
     .addStep(initialStep)
     .branch([
@@ -318,7 +318,7 @@ Deno.test("onError - sequential step throws error without handler", async () => 
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
 
   let errorThrown = false;
   try {
@@ -348,7 +348,7 @@ Deno.test("onError - sequential step with error handler prevents crash", async (
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow.addStep(failingStep).run();
 
   assertEquals(errorHandlerCalled, true);
@@ -384,7 +384,7 @@ Deno.test("onError - error handler receives correct input and state", async () =
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   await workflow.addStep(step1).addStep(failingStep).run();
 
   assertEquals(capturedInput, "test input");
@@ -414,7 +414,7 @@ Deno.test("onError - workflow continues after error with next step", async () =>
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow
     .addStep(failingStep)
     .addStep(successStep)
@@ -452,7 +452,7 @@ Deno.test("onError - parallel execution with one failing step", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow
     .addStep(initialStep)
     .parallel([successStep, failingStep])
@@ -498,7 +498,7 @@ Deno.test("onError - parallel execution with multiple failing steps", async () =
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow
     .addStep(initialStep)
     .parallel([failingStep1, failingStep2])
@@ -527,7 +527,7 @@ Deno.test("onError - parallel execution without error handler crashes", async ()
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
 
   let errorThrown = false;
   try {
@@ -565,7 +565,7 @@ Deno.test("onError - branch execution with failing step", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   const result = await workflow
     .addStep(initialStep)
     .branch([[failingBranchStep, (output: number) => output > 5]])
@@ -590,7 +590,7 @@ Deno.test("onError - error handler can access and modify state", async () => {
     },
   });
 
-  const workflow = new Workflow();
+  const workflow = createWorkflow();
   await workflow.addStep(failingStep).run();
 
   assertEquals(workflow.getState().attemptCount, 2);
@@ -944,4 +944,142 @@ Deno.test("Workflow as Step - deeply nested workflows", async () => {
 
   // 5 -> *2 = 10 -> +1 = 11
   assertEquals(result, 11);
+});
+
+// Mule Configuration Tests
+
+Deno.test("Mule - creates workflow with projectId", () => {
+  const mule = new Mule("test-project");
+  const workflow = mule.createWorkflow();
+
+  assertEquals(workflow.projectId, "test-project");
+});
+
+Deno.test("Mule - respects logging disabled option", () => {
+  const mule = new Mule("test", { logging: { enabled: false } });
+  const workflow = mule.createWorkflow();
+
+  assertEquals(workflow.logger, null);
+});
+
+Deno.test("Mule - uses MULE_PROJECT_ID env var", () => {
+  Deno.env.set("MULE_PROJECT_ID", "env-project");
+  const mule = new Mule();
+  const workflow = mule.createWorkflow();
+
+  assertEquals(workflow.projectId, "env-project");
+  Deno.env.delete("MULE_PROJECT_ID");
+});
+
+Deno.test("Mule - constructor parameter takes precedence over env var", () => {
+  Deno.env.set("MULE_PROJECT_ID", "env-project");
+  const mule = new Mule("explicit-project");
+  const workflow = mule.createWorkflow();
+
+  assertEquals(workflow.projectId, "explicit-project");
+  Deno.env.delete("MULE_PROJECT_ID");
+});
+
+Deno.test("Mule - defaults to unknown when no projectId provided", () => {
+  Deno.env.delete("MULE_PROJECT_ID");
+  const mule = new Mule();
+  const workflow = mule.createWorkflow();
+
+  assertEquals(workflow.projectId, "unknown");
+});
+
+Deno.test("Mule - creates workflow with initial state", () => {
+  const mule = new Mule("test-project");
+  const workflow = mule.createWorkflow({ apiKey: "test-key", retryCount: 3 });
+
+  assertEquals(workflow.getState().apiKey, "test-key");
+  assertEquals(workflow.getState().retryCount, 3);
+  assertEquals(workflow.projectId, "test-project");
+});
+
+Deno.test("Mule - creates workflow with input schema", () => {
+  const mule = new Mule("test-project");
+  const inputSchema = z.object({
+    userId: z.string(),
+    email: z.string().email(),
+  });
+
+  const workflow = mule.createWorkflow({}, inputSchema);
+
+  assertEquals(workflow.inputSchema, inputSchema);
+  assertEquals(workflow.projectId, "test-project");
+});
+
+Deno.test("Mule - custom logger is used in workflows", () => {
+  const mockLogs: LLMCallLog[] = [];
+  const mockLogger: Logger = {
+    log: async (data: LLMCallLog) => {
+      mockLogs.push(data);
+    },
+  };
+
+  const mule = new Mule("integration-test", {
+    logging: { logger: mockLogger },
+  });
+
+  const workflow = mule.createWorkflow();
+
+  assertEquals(workflow.logger, mockLogger);
+  assertEquals(workflow.projectId, "integration-test");
+});
+
+Deno.test("Mule - nested workflows inherit parent configuration", () => {
+  const mule = new Mule("parent-project");
+
+  const innerWorkflow = mule.createWorkflow();
+  const outerWorkflow = mule.createWorkflow();
+
+  // Verify both workflows have the same projectId and logger from mule
+  assertEquals(innerWorkflow.projectId, "parent-project");
+  assertEquals(outerWorkflow.projectId, "parent-project");
+  assertExists(innerWorkflow.logger);
+  assertExists(outerWorkflow.logger);
+});
+
+Deno.test("Mule - multiple workflows from same instance share config", () => {
+  const mule = new Mule("shared-project");
+
+  const workflow1 = mule.createWorkflow();
+  const workflow2 = mule.createWorkflow();
+
+  assertEquals(workflow1.projectId, "shared-project");
+  assertEquals(workflow2.projectId, "shared-project");
+  assertExists(workflow1.logger);
+  assertExists(workflow2.logger);
+});
+
+Deno.test("createWorkflow - deprecated function shows warning", () => {
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+
+  console.warn = (message: string) => {
+    warnings.push(message);
+  };
+
+  const workflow = createWorkflow();
+
+  console.warn = originalWarn;
+
+  // Should have deprecation warning
+  const hasDeprecationWarning = warnings.some(w => w.includes("deprecated"));
+  assertEquals(hasDeprecationWarning, true);
+  assertEquals(workflow.projectId, "unknown");
+});
+
+Deno.test("createWorkflow - deprecated function uses MULE_PROJECT_ID", () => {
+  const originalWarn = console.warn;
+  console.warn = () => {}; // Suppress warning
+
+  Deno.env.set("MULE_PROJECT_ID", "env-project");
+  const workflow = createWorkflow();
+
+  console.warn = originalWarn;
+
+  assertEquals(workflow.projectId, "env-project");
+  Deno.env.delete("MULE_PROJECT_ID");
 });
