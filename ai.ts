@@ -77,7 +77,7 @@ export class AIService {
         usage: response.usage,
         duration,
         finishReason: response.finishReason,
-        result,
+        result: typeof result === "string" ? result : JSON.stringify(result),
       };
 
       await this.config.logger.log(logData);

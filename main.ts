@@ -1,9 +1,17 @@
 import { z } from "npm:zod@^4.1.12";
 import { AIService } from "./ai.ts";
 import type { Logger, LLMCallLog, MuleOptions } from "./types.ts";
+import {
+  RepositoryLogger,
+  type PersistenceConfig,
+  type StepExecutionRepository,
+} from "./persistence.ts";
+import { SQLiteRepository } from "./sqlite-repository.ts";
 
 // Re-export types for convenience
 export type { Logger, LLMCallLog, MuleOptions };
+export type { PersistenceConfig, StepExecutionRepository } from "./persistence.ts";
+export type { StepExecution } from "./persistence.ts";
 
 /**
  * Console logger implementation
@@ -208,12 +216,40 @@ class Workflow<TCurrentOutput = undefined> {
 }
 
 /**
+ * Create persistence repository based on configuration
+ */
+function createPersistenceRepository(
+  config: PersistenceConfig | undefined
+): StepExecutionRepository | null {
+  // Default: SQLite at ~/.mule/executions.db
+  if (config === undefined) {
+    return new SQLiteRepository();
+  }
+
+  // Explicitly disabled
+  if (config === false) {
+    return null;
+  }
+
+  // Explicit configuration
+  switch (config.type) {
+    case "sqlite":
+      return new SQLiteRepository(config.path);
+    case "postgres":
+      throw new Error("PostgreSQL persistence not yet implemented");
+    case "http":
+      throw new Error("HTTP persistence not yet implemented");
+  }
+}
+
+/**
  * Main Mule class for project-level configuration
  */
 class Mule {
   private projectId: string;
   private logger: Logger;
   private loggingEnabled: boolean;
+  private repository: StepExecutionRepository | null;
 
   constructor(projectId?: string, options?: MuleOptions) {
     this.projectId = projectId || Deno.env.get("MULE_PROJECT_ID") || "unknown";
@@ -224,20 +260,41 @@ class Mule {
       );
     }
 
+    // Create persistence repository
+    this.repository = createPersistenceRepository(options?.persistence);
+
+    // Set up logger
     this.loggingEnabled = options?.logging?.enabled ?? true;
-    this.logger = options?.logging?.logger ?? new ConsoleLogger();
+
+    // If persistence is enabled, use RepositoryLogger
+    if (this.repository && this.loggingEnabled) {
+      this.logger = new RepositoryLogger(this.repository);
+    } else if (this.loggingEnabled) {
+      // Fall back to custom logger or console logger
+      this.logger = options?.logging?.logger ?? new ConsoleLogger();
+    } else {
+      // Logging disabled, use no-op logger
+      this.logger = options?.logging?.logger ?? new ConsoleLogger();
+    }
   }
 
-  createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(params: {
+  /**
+   * Get the persistence repository for querying execution history
+   */
+  getRepository(): StepExecutionRepository | null {
+    return this.repository;
+  }
+
+  createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(params?: {
     state?: Record<string, unknown>;
     inputSchema?: TInputSchema;
     id?: string;
   }): Workflow<z.infer<TInputSchema>> {
-    const workflowId = params.id || crypto.randomUUID();
+    const workflowId = params?.id || crypto.randomUUID();
     const workflow = new Workflow<z.infer<TInputSchema>>(
       workflowId,
-      params.state || {},
-      params.inputSchema || (z.undefined() as TInputSchema)
+      params?.state || {},
+      params?.inputSchema || (z.undefined() as any)
     );
 
     // Inject configuration
@@ -263,7 +320,7 @@ function createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(
   return defaultMule.createWorkflow({ state, inputSchema, id });
 }
 
-export { createStep, createWorkflow, Workflow, Mule };
+export { createStep, createWorkflow, Workflow, Mule, SQLiteRepository, RepositoryLogger };
 
 export default {
   createStep,

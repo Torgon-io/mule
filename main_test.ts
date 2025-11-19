@@ -1,5 +1,5 @@
 import { assertEquals, assertExists } from "@std/assert";
-import { Workflow, createStep, createWorkflow, Mule, Logger, LLMCallLog } from "./main.ts";
+import { Workflow, createStep, createWorkflow, Mule, Logger, LLMCallLog, SQLiteRepository } from "./main.ts";
 import { z } from "npm:zod@^4.1.12";
 
 Deno.test("Workflow - single step execution", async () => {
@@ -1082,4 +1082,204 @@ Deno.test("createWorkflow - deprecated function uses MULE_PROJECT_ID", () => {
 
   assertEquals(workflow.projectId, "env-project");
   Deno.env.delete("MULE_PROJECT_ID");
+});
+
+// Persistence Tests
+
+Deno.test("SQLiteRepository - save and retrieve execution", async () => {
+  const repo = new SQLiteRepository(":memory:");
+
+  const execution = {
+    projectId: "test-project",
+    workflowId: "test-workflow",
+    runId: "run-1",
+    stepId: "step-1",
+    timestamp: new Date().toISOString(),
+    status: "success" as const,
+    model: "gpt-4",
+    totalTokens: 150,
+    promptTokens: 100,
+    completionTokens: 50,
+  };
+
+  await repo.save(execution);
+
+  const results = await repo.getWorkflowRun("test-project", "test-workflow", "run-1");
+  assertEquals(results.length, 1);
+  assertEquals(results[0].stepId, "step-1");
+  assertEquals(results[0].model, "gpt-4");
+  assertEquals(results[0].totalTokens, 150);
+
+  repo.close();
+});
+
+Deno.test("SQLiteRepository - retrieve multiple executions", async () => {
+  const repo = new SQLiteRepository(":memory:");
+
+  await repo.save({
+    projectId: "test-project",
+    workflowId: "test-workflow",
+    runId: "run-1",
+    stepId: "step-1",
+    timestamp: "2024-01-01T10:00:00Z",
+    status: "success",
+  });
+
+  await repo.save({
+    projectId: "test-project",
+    workflowId: "test-workflow",
+    runId: "run-1",
+    stepId: "step-2",
+    timestamp: "2024-01-01T10:01:00Z",
+    status: "success",
+  });
+
+  const results = await repo.getWorkflowRun("test-project", "test-workflow", "run-1");
+  assertEquals(results.length, 2);
+  assertEquals(results[0].stepId, "step-1");
+  assertEquals(results[1].stepId, "step-2");
+
+  repo.close();
+});
+
+Deno.test("SQLiteRepository - getProjectHistory returns recent executions", async () => {
+  const repo = new SQLiteRepository(":memory:");
+
+  for (let i = 1; i <= 5; i++) {
+    await repo.save({
+      projectId: "test-project",
+      workflowId: "workflow-" + i,
+      runId: "run-" + i,
+      stepId: "step-" + i,
+      timestamp: new Date(2024, 0, i).toISOString(),
+      status: "success",
+    });
+  }
+
+  const results = await repo.getProjectHistory("test-project", 3);
+  assertEquals(results.length, 3);
+  // Should be in descending order by timestamp
+  assertEquals(results[0].stepId, "step-5");
+  assertEquals(results[1].stepId, "step-4");
+  assertEquals(results[2].stepId, "step-3");
+
+  repo.close();
+});
+
+Deno.test("SQLiteRepository - handles error status", async () => {
+  const repo = new SQLiteRepository(":memory:");
+
+  await repo.save({
+    projectId: "test-project",
+    workflowId: "test-workflow",
+    runId: "run-1",
+    stepId: "step-1",
+    timestamp: new Date().toISOString(),
+    status: "error",
+    error: "Something went wrong",
+  });
+
+  const results = await repo.getWorkflowRun("test-project", "test-workflow", "run-1");
+  assertEquals(results.length, 1);
+  assertEquals(results[0].status, "error");
+  assertEquals(results[0].error, "Something went wrong");
+
+  repo.close();
+});
+
+Deno.test("SQLiteRepository - stores prompt and result", async () => {
+  const repo = new SQLiteRepository(":memory:");
+
+  const messages = [
+    { role: "system", content: "You are a helpful assistant" },
+    { role: "user", content: "Hello!" },
+  ];
+
+  await repo.save({
+    projectId: "test-project",
+    workflowId: "test-workflow",
+    runId: "run-1",
+    stepId: "step-1",
+    timestamp: new Date().toISOString(),
+    status: "success",
+    prompt: JSON.stringify(messages),
+    result: "Hello! How can I help you?",
+  });
+
+  const results = await repo.getWorkflowRun("test-project", "test-workflow", "run-1");
+  assertEquals(results.length, 1);
+  assertEquals(results[0].prompt, JSON.stringify(messages));
+  assertEquals(results[0].result, "Hello! How can I help you?");
+
+  repo.close();
+});
+
+Deno.test("Mule - persistence enabled by default", () => {
+  const mule = new Mule("test-project", {
+    persistence: { type: "sqlite", path: ":memory:" },
+  });
+
+  const repo = mule.getRepository();
+  assertExists(repo);
+
+  repo?.close();
+});
+
+Deno.test("Mule - persistence can be disabled", () => {
+  const mule = new Mule("test-project", {
+    persistence: false,
+  });
+
+  const repo = mule.getRepository();
+  assertEquals(repo, null);
+});
+
+Deno.test("Mule - uses RepositoryLogger when persistence enabled", () => {
+  const mule = new Mule("test-project", {
+    persistence: { type: "sqlite", path: ":memory:" },
+  });
+
+  const workflow = mule.createWorkflow();
+  assertExists(workflow.logger);
+
+  const repo = mule.getRepository();
+  repo?.close();
+});
+
+Deno.test("Mule - custom logger used when persistence disabled", () => {
+  const mockLogger: Logger = {
+    log: async (_data: LLMCallLog) => {},
+  };
+
+  const mule = new Mule("test-project", {
+    persistence: false,
+    logging: { logger: mockLogger },
+  });
+
+  const workflow = mule.createWorkflow();
+  assertEquals(workflow.logger, mockLogger);
+});
+
+Deno.test("Mule - persistence with custom SQLite path", () => {
+  const mule = new Mule("test-project", {
+    persistence: { type: "sqlite", path: ":memory:" },
+  });
+
+  const repo = mule.getRepository();
+  assertExists(repo);
+
+  repo?.close();
+});
+
+Deno.test("Mule - persistence throws error for unimplemented backends", () => {
+  let errorThrown = false;
+  try {
+    new Mule("test-project", {
+      persistence: { type: "postgres", connectionString: "postgres://localhost" } as any,
+    });
+  } catch (error) {
+    errorThrown = true;
+    assertEquals((error as Error).message, "PostgreSQL persistence not yet implemented");
+  }
+  assertEquals(errorThrown, true);
 });

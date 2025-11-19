@@ -2,6 +2,11 @@
  * Shared types to avoid circular dependencies
  */
 
+import type { PersistenceConfig, StepExecution, StepExecutionRepository } from "./persistence.ts";
+
+// Re-export persistence types
+export type { PersistenceConfig, StepExecution, StepExecutionRepository };
+
 /**
  * Logger interface for custom logging implementations
  */
@@ -20,6 +25,7 @@ export interface LLMCallLog {
   timestamp: string;
   model?: string;
   messages?: Array<{ role: string; content: string }>;
+  result?: string;
   usage?: {
     promptTokens?: number;
     completionTokens?: number;
@@ -27,6 +33,7 @@ export interface LLMCallLog {
   };
   duration?: number;
   finishReason?: string;
+  error?: string;
   [key: string]: any;
 }
 
@@ -34,6 +41,7 @@ export interface LLMCallLog {
  * Configuration options for Mule
  */
 export interface MuleOptions {
+  persistence?: PersistenceConfig;
   logging?: {
     enabled?: boolean;
     logger?: Logger;

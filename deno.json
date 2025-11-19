@@ -4,7 +4,12 @@
   "exports": "./main.ts",
   "license": "MIT",
   "tasks": {
-    "dev": "deno run --watch main.ts"
+    "dev": "deno run --watch main.ts",
+    "query": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-net --unstable-ffi scripts/query-executions.ts",
+    "export": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-net --unstable-ffi scripts/export-executions.ts",
+    "stats": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-net --unstable-ffi scripts/stats.ts",
+    "cleanup": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-net --unstable-ffi scripts/cleanup.ts",
+    "example": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-net --unstable-ffi scripts/example.ts"
   },
   "imports": {
     "@openrouter/ai-sdk-provider": "npm:@openrouter/ai-sdk-provider@^1.2.3",
