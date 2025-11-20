@@ -67,6 +67,30 @@ export class AIService {
   ) {
     // If logger is configured, use it
     if (this.config.logger) {
+      // Extract token counts - AI SDK v5 can return them with different field names
+      // Standard format: response.usage.{promptTokens, completionTokens}
+      // Alternative format: response.usage.{inputTokens, outputTokens}
+      // OpenRouter provider format: response.providerMetadata.openrouter.usage.{promptTokens, completionTokens}
+
+      let promptTokens = response.usage?.promptTokens ?? response.usage?.inputTokens;
+      let completionTokens = response.usage?.completionTokens ?? response.usage?.outputTokens;
+      let totalTokens = response.usage?.totalTokens;
+
+      // Check OpenRouter provider metadata as fallback
+      const openrouterUsage = response.providerMetadata?.openrouter?.usage;
+      if (openrouterUsage && (!promptTokens || !completionTokens)) {
+        promptTokens = promptTokens ?? openrouterUsage.promptTokens;
+        completionTokens = completionTokens ?? openrouterUsage.completionTokens;
+        totalTokens = totalTokens ?? openrouterUsage.totalTokens;
+      }
+
+      // Normalize the usage object to use consistent field names
+      const normalizedUsage = {
+        promptTokens,
+        completionTokens,
+        totalTokens,
+      };
+
       const logData: LLMCallLog = {
         projectId: this.config.projectId,
         workflowId: this.config.workflowId,
@@ -75,7 +99,7 @@ export class AIService {
         timestamp: new Date().toISOString(),
         model: request.model,
         messages: request.messages,
-        usage: response.usage,
+        usage: normalizedUsage,
         duration,
         finishReason: response.finishReason,
         result: typeof result === "string" ? result : JSON.stringify(result),
@@ -83,11 +107,11 @@ export class AIService {
 
       // Calculate cost asynchronously (non-blocking)
       // If pricing is not available, cost will be undefined
-      if (response.usage && (response.usage.promptTokens || response.usage.completionTokens)) {
+      if (promptTokens || completionTokens) {
         try {
           const cost = await pricingService.getCost(request.model, {
-            promptTokens: response.usage.promptTokens,
-            completionTokens: response.usage.completionTokens,
+            promptTokens: promptTokens ?? 0,
+            completionTokens: completionTokens ?? 0,
           });
 
           if (cost) {
@@ -97,13 +121,12 @@ export class AIService {
           // Silently fail - cost tracking is optional
           console.warn(`Failed to calculate cost for ${request.model}:`, error);
         }
-      } else if (response.usage && response.usage.totalTokens) {
-        // Some models (like Gemini) don't provide prompt/completion breakdown
-        // Log a warning so users know cost tracking won't work for these models
+      } else if (totalTokens) {
+        // Some models don't provide prompt/completion breakdown
         console.warn(
           `Model ${request.model} doesn't provide prompt/completion token breakdown. ` +
           `Cost tracking requires separate prompt and completion token counts. ` +
-          `Total tokens: ${response.usage.totalTokens}`
+          `Total tokens: ${totalTokens}`
         );
       }
 
@@ -119,6 +142,15 @@ export class AIService {
       model: openrouter(request.model),
     });
     const duration = Date.now() - startTime;
+    console.log("DEBUG - Response structure:", JSON.stringify({
+      usage: response.usage,
+      finishReason: response.finishReason,
+      hasContent: !!response.content,
+      providerMetadata: (response as any).providerMetadata,
+      rawResponse: (response as any).rawResponse ? "exists" : "missing",
+      id: (response as any).id,
+      allKeys: Object.keys(response),
+    }, null, 2));
     this.storeRequestMetadata(request, response, duration, "not implemented");
     return response.content;
   }
@@ -135,7 +167,14 @@ export class AIService {
         ...request,
         model: openrouter(request.model),
       });
-      // console.log({ reponse });
+      console.log("DEBUG - generateObject Response structure:", JSON.stringify({
+        usage: reponse.usage,
+        finishReason: reponse.finishReason,
+        hasObject: !!reponse.object,
+        providerMetadata: (reponse as any).providerMetadata,
+        experimental_providerMetadata: (reponse as any).experimental_providerMetadata,
+        allKeys: Object.keys(reponse),
+      }, null, 2));
       const duration = Date.now() - startTime;
       this.storeRequestMetadata(request, reponse, duration, reponse.object);
 

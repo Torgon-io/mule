@@ -195,15 +195,15 @@ await workflow.run();
 
 ---
 
-## Web Viewer
+## Web Studio
 
 A lightweight web UI for visualizing workflow executions and LLM performance.
 
 ### Quick Start
 
 ```bash
-# Start the viewer server
-deno task viewer
+# Start the studio server
+deno task studio
 
 # Open in your browser
 open http://localhost:8080
@@ -222,13 +222,13 @@ open http://localhost:8080
 
 ### Architecture
 
-**Server ([viewer-server.ts](viewer-server.ts))** - Simple Deno HTTP server with three API endpoints:
+**Server ([studio-server.ts](studio-server.ts))** - Simple Deno HTTP server with three API endpoints:
 
 - `GET /api/projects` - List all unique project IDs
 - `GET /api/runs?projectId=X` - Get recent runs for a project
 - `GET /api/run/:projectId/:workflowId/:runId` - Get detailed step executions
 
-**UI ([viewer.html](viewer.html))** - Single-page HTML application with:
+**UI ([studio.html](studio.html))** - Single-page HTML application with:
 - Vanilla JavaScript (no build step)
 - Tailwind CSS via CDN
 - Syntax-highlighted JSON viewers
@@ -245,10 +245,10 @@ open http://localhost:8080
 
 ### Customization
 
-**Change Port** - Edit `PORT` constant in [viewer-server.ts](viewer-server.ts):
+**Change Port** - Edit `PORT` constant in [studio-server.ts](studio-server.ts):
 
 ```typescript
 const PORT = 3000; // Change from 8080
 ```
 
-**Styling** - All styles are inline in [viewer.html](viewer.html). Edit the `<style>` section or Tailwind classes to customize appearance.
+**Styling** - All styles are inline in [studio.html](studio.html). Edit the `<style>` section or Tailwind classes to customize appearance.

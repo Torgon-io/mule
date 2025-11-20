@@ -1,12 +1,12 @@
-# Web Viewer Cost Tracking Updates
+# Web Studio Cost Tracking Updates
 
 ## Overview
 
-The Mule Web Viewer has been updated to display inference cost tracking across all views, providing visual insights into LLM spending at the run and step levels.
+The Mule Web Studio has been updated to display inference cost tracking across all views, providing visual insights into LLM spending at the run and step levels.
 
 ## Changes Made
 
-### 1. Server-Side Updates ([viewer-server.ts](scripts/viewer-server.ts))
+### 1. Server-Side Updates ([studio-server.ts](scripts/studio-server.ts))
 
 **Updated `handleRuns()` API endpoint:**
 - Added `SUM(COALESCE(total_cost_usd, 0)) as total_cost_usd` to the runs aggregation query
@@ -17,7 +17,7 @@ The Mule Web Viewer has been updated to display inference cost tracking across a
 Database → SQLiteRepository → API Endpoint → JSON Response → Web UI
 ```
 
-### 2. UI Updates ([viewer.html](scripts/viewer.html))
+### 2. UI Updates ([studio.html](scripts/studio.html))
 
 #### New Formatting Function
 ```javascript
@@ -83,17 +83,17 @@ View workflow runs, step executions, LLM token usage, and inference costs
 
 ### 3. Task Configuration ([deno.json](deno.json))
 
-Added new task for easy viewer startup:
+Added new task for easy studio startup:
 ```bash
-deno task viewer
+deno task studio
 ```
 
 ### 4. Documentation ([scripts/README.md](scripts/README.md))
 
 Updated to reflect cost tracking features:
 - Added cost analysis to stats output description
-- Updated web viewer features list to include cost tracking
-- Simplified Quick Start to use `deno task viewer`
+- Updated web studio features list to include cost tracking
+- Simplified Quick Start to use `deno task studio`
 - Added cost metrics to usage tips
 
 ## Visual Highlights
@@ -112,9 +112,9 @@ Updated to reflect cost tracking features:
 
 ### Viewing Run Costs
 
-1. Start the viewer:
+1. Start the studio:
    ```bash
-   deno task viewer
+   deno task studio
    ```
 
 2. Open http://localhost:8080
@@ -203,7 +203,7 @@ All features use standard JavaScript APIs:
 
 ## Future Enhancements
 
-Potential additions to the viewer:
+Potential additions to the studio:
 - **Cost filtering**: Filter runs by cost threshold
 - **Cost charts**: Visualize cost trends over time
 - **Cost comparisons**: Compare costs across models
@@ -212,16 +212,16 @@ Potential additions to the viewer:
 
 ## Testing
 
-To verify cost tracking in the viewer:
+To verify cost tracking in the studio:
 
 1. Run a workflow with LLM steps:
    ```bash
    deno task example
    ```
 
-2. Start the viewer:
+2. Start the studio:
    ```bash
-   deno task viewer
+   deno task studio
    ```
 
 3. Navigate to the project and verify:
@@ -232,14 +232,14 @@ To verify cost tracking in the viewer:
 
 ## Files Modified
 
-- [scripts/viewer-server.ts](scripts/viewer-server.ts) - Added cost to runs query
-- [scripts/viewer.html](scripts/viewer.html) - Added cost displays throughout UI
-- [deno.json](deno.json) - Added `viewer` task
+- [scripts/studio-server.ts](scripts/studio-server.ts) - Added cost to runs query
+- [scripts/studio.html](scripts/studio.html) - Added cost displays throughout UI
+- [deno.json](deno.json) - Added `studio` task
 - [scripts/README.md](scripts/README.md) - Updated documentation
 
 ## Conclusion
 
-The web viewer now provides comprehensive cost visibility across all levels of workflow execution, enabling teams to:
+The web studio now provides comprehensive cost visibility across all levels of workflow execution, enabling teams to:
 - Monitor LLM spending in real-time
 - Identify expensive workflows and steps
 - Optimize prompt engineering for cost efficiency

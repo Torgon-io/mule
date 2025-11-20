@@ -236,7 +236,7 @@ Total tokens: 45
 **New Files:**
 - `pricing.ts` - Pricing service implementation
 - `pricing_test.ts` - Unit tests for pricing service
-- `COST_TRACKING_SUMMARY.md` - This file
+- `docs/cost-tracking.md` - This file
 
 **Modified Files:**
 - `types.ts` - Added cost fields to LLMCallLog

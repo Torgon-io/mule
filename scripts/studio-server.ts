@@ -72,12 +72,12 @@ async function handleRunDetails(
 // Read HTML file
 async function serveHTML(): Promise<Response> {
   try {
-    const html = await Deno.readTextFile("./scripts/viewer.html");
+    const html = await Deno.readTextFile("./scripts/studio.html");
     return new Response(html, {
       headers: { "Content-Type": "text/html" },
     });
   } catch (error) {
-    return new Response(`Error loading viewer.html: ${error}`, {
+    return new Response(`Error loading studio.html: ${error}`, {
       status: 500,
     });
   }
@@ -150,7 +150,7 @@ async function handleRequest(req: Request): Promise<Response> {
 }
 
 // Start server
-console.log(`🚀 Mule Workflow Viewer running at http://localhost:${PORT}`);
+console.log(`🚀 Mule Workflow Studio running at http://localhost:${PORT}`);
 console.log(`📊 Database: ~/.mule/executions.db`);
 console.log(`\n✨ Open http://localhost:${PORT} in your browser\n`);
 
