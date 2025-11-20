@@ -29,6 +29,11 @@ export interface StepExecution {
   totalTokens?: number;
   finishReason?: string;
 
+  // Cost metrics (USD)
+  promptCostUsd?: number;
+  completionCostUsd?: number;
+  totalCostUsd?: number;
+
   // Execution status
   status: "success" | "error";
   error?: string; // Error message if status = "error"
@@ -104,6 +109,9 @@ export class RepositoryLogger implements Logger {
       completionTokens: data.usage?.completionTokens,
       totalTokens: data.usage?.totalTokens,
       finishReason: data.finishReason,
+      promptCostUsd: data.cost?.promptCost,
+      completionCostUsd: data.cost?.completionCost,
+      totalCostUsd: data.cost?.totalCost,
       status: data.error ? "error" : "success",
       error: data.error,
     };

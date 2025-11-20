@@ -33,36 +33,50 @@ try {
     totalSteps: history.length,
     totalTokens: 0,
     totalDuration: 0,
+    totalCost: 0,
     successCount: 0,
     errorCount: 0,
-    models: new Map<string, number>(),
-    workflows: new Map<string, { steps: number, tokens: number }>(),
-    dates: new Map<string, number>(),
+    models: new Map<string, { count: number; tokens: number; cost: number }>(),
+    workflows: new Map<string, { steps: number; tokens: number; cost: number }>(),
+    dates: new Map<string, { count: number; cost: number }>(),
   };
 
   for (const step of history) {
     stats.totalTokens += step.totalTokens || 0;
     stats.totalDuration += step.durationMs || 0;
+    stats.totalCost += step.totalCostUsd || 0;
 
     if (step.status === "success") stats.successCount++;
     if (step.status === "error") stats.errorCount++;
 
     // Model usage
     if (step.model) {
-      stats.models.set(step.model, (stats.models.get(step.model) || 0) + 1);
+      if (!stats.models.has(step.model)) {
+        stats.models.set(step.model, { count: 0, tokens: 0, cost: 0 });
+      }
+      const modelStats = stats.models.get(step.model)!;
+      modelStats.count++;
+      modelStats.tokens += step.totalTokens || 0;
+      modelStats.cost += step.totalCostUsd || 0;
     }
 
     // Workflow stats
     if (!stats.workflows.has(step.workflowId)) {
-      stats.workflows.set(step.workflowId, { steps: 0, tokens: 0 });
+      stats.workflows.set(step.workflowId, { steps: 0, tokens: 0, cost: 0 });
     }
     const workflowStats = stats.workflows.get(step.workflowId)!;
     workflowStats.steps++;
     workflowStats.tokens += step.totalTokens || 0;
+    workflowStats.cost += step.totalCostUsd || 0;
 
     // Date distribution
     const date = step.timestamp.split("T")[0];
-    stats.dates.set(date, (stats.dates.get(date) || 0) + 1);
+    if (!stats.dates.has(date)) {
+      stats.dates.set(date, { count: 0, cost: 0 });
+    }
+    const dateStats = stats.dates.get(date)!;
+    dateStats.count++;
+    dateStats.cost += step.totalCostUsd || 0;
   }
 
   // Display statistics
@@ -83,13 +97,20 @@ try {
   console.log(`  Total Duration: ${(stats.totalDuration / 1000).toFixed(2)}s`);
   console.log(`  Avg Duration/Step: ${Math.round(stats.totalDuration / stats.totalSteps)}ms`);
 
+  if (stats.totalCost > 0) {
+    console.log(`\n💰 Cost Analysis:`);
+    console.log(`  Total Cost: $${stats.totalCost.toFixed(4)}`);
+    console.log(`  Avg Cost/Step: $${(stats.totalCost / stats.totalSteps).toFixed(6)}`);
+  }
+
   if (stats.models.size > 0) {
     console.log("\nModel Usage:");
     const sortedModels = Array.from(stats.models.entries())
-      .sort((a, b) => b[1] - a[1]);
-    for (const [model, count] of sortedModels) {
-      const percentage = ((count / stats.totalSteps) * 100).toFixed(1);
-      console.log(`  ${model}: ${count} (${percentage}%)`);
+      .sort((a, b) => b[1].count - a[1].count);
+    for (const [model, data] of sortedModels) {
+      const percentage = ((data.count / stats.totalSteps) * 100).toFixed(1);
+      const costInfo = data.cost > 0 ? ` - $${data.cost.toFixed(4)}` : "";
+      console.log(`  ${model}: ${data.count} (${percentage}%)${costInfo}`);
     }
   }
 
@@ -101,7 +122,8 @@ try {
 
     for (const [workflow, data] of sortedWorkflows) {
       console.log(`  ${workflow}:`);
-      console.log(`    Steps: ${data.steps}, Tokens: ${data.tokens.toLocaleString()}`);
+      const costInfo = data.cost > 0 ? `, Cost: $${data.cost.toFixed(4)}` : "";
+      console.log(`    Steps: ${data.steps}, Tokens: ${data.tokens.toLocaleString()}${costInfo}`);
     }
   }
 
@@ -111,9 +133,10 @@ try {
       .sort((a, b) => b[0].localeCompare(a[0]))
       .slice(0, 10);
 
-    for (const [date, count] of sortedDates) {
-      const bar = "█".repeat(Math.ceil(count / 5));
-      console.log(`  ${date}: ${bar} ${count}`);
+    for (const [date, data] of sortedDates) {
+      const bar = "█".repeat(Math.ceil(data.count / 5));
+      const costInfo = data.cost > 0 ? ` ($${data.cost.toFixed(4)})` : "";
+      console.log(`  ${date}: ${bar} ${data.count}${costInfo}`);
     }
   }
 

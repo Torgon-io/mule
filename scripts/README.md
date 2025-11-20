@@ -81,6 +81,7 @@ deno task stats -- --project my-project
 **Output includes:**
 - Total steps, success rate, error rate
 - Token usage (total and average per step)
+- **Cost analysis** (total cost, cost per step, cost by model)
 - Duration statistics
 - Model usage breakdown
 - Top workflows by activity
@@ -191,3 +192,63 @@ await workflow.run();
 // Now query with scripts:
 // deno task query -- --project my-project
 ```
+
+---
+
+## Web Viewer
+
+A lightweight web UI for visualizing workflow executions and LLM performance.
+
+### Quick Start
+
+```bash
+# Start the viewer server
+deno task viewer
+
+# Open in your browser
+open http://localhost:8080
+```
+
+### Features
+
+- **📊 Project Dashboard** - View all projects with workflow executions
+- **🔍 Run Browser** - Browse recent workflow runs with aggregate stats
+- **⚡ Step Timeline** - See detailed execution timeline for each run
+- **💬 LLM Inspection** - View full prompts and results for each step
+- **🔢 Token Tracking** - Monitor token usage (prompt, completion, total)
+- **💰 Cost Tracking** - View inference costs per step, per run, and aggregate totals
+- **⏱️ Performance Metrics** - Track step duration and total execution time
+- **❌ Error Tracking** - Identify and inspect failed steps
+
+### Architecture
+
+**Server ([viewer-server.ts](viewer-server.ts))** - Simple Deno HTTP server with three API endpoints:
+
+- `GET /api/projects` - List all unique project IDs
+- `GET /api/runs?projectId=X` - Get recent runs for a project
+- `GET /api/run/:projectId/:workflowId/:runId` - Get detailed step executions
+
+**UI ([viewer.html](viewer.html))** - Single-page HTML application with:
+- Vanilla JavaScript (no build step)
+- Tailwind CSS via CDN
+- Syntax-highlighted JSON viewers
+- Responsive layout with sidebar navigation
+
+### Usage Tips
+
+1. **Select a project** from the dropdown to view its runs
+2. **Click a run** in the left sidebar to view step details
+3. **View cost metrics** - See total cost, average cost per step, and per-token pricing breakdown
+4. **Expand prompts/results** using the disclosure triangles
+5. **Monitor token usage** - Track prompt tokens, completion tokens, and associated costs
+6. **Review errors** highlighted in red with error messages
+
+### Customization
+
+**Change Port** - Edit `PORT` constant in [viewer-server.ts](viewer-server.ts):
+
+```typescript
+const PORT = 3000; // Change from 8080
+```
+
+**Styling** - All styles are inline in [viewer.html](viewer.html). Edit the `<style>` section or Tailwind classes to customize appearance.

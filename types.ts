@@ -31,6 +31,11 @@ export interface LLMCallLog {
     completionTokens?: number;
     totalTokens?: number;
   };
+  cost?: {
+    promptCost: number;      // Cost for input/prompt tokens (USD)
+    completionCost: number;  // Cost for output/completion tokens (USD)
+    totalCost: number;       // Total cost (USD)
+  };
   duration?: number;
   finishReason?: string;
   error?: string;

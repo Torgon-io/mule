@@ -10,6 +10,7 @@ import {
   NoObjectGeneratedError,
 } from "npm:ai@^5.0.93";
 import type { Logger, LLMCallLog } from "./types.ts";
+import { pricingService } from "./pricing.ts";
 
 type GenerateRequest = {
   model: string;
@@ -79,6 +80,32 @@ export class AIService {
         finishReason: response.finishReason,
         result: typeof result === "string" ? result : JSON.stringify(result),
       };
+
+      // Calculate cost asynchronously (non-blocking)
+      // If pricing is not available, cost will be undefined
+      if (response.usage && (response.usage.promptTokens || response.usage.completionTokens)) {
+        try {
+          const cost = await pricingService.getCost(request.model, {
+            promptTokens: response.usage.promptTokens,
+            completionTokens: response.usage.completionTokens,
+          });
+
+          if (cost) {
+            logData.cost = cost;
+          }
+        } catch (error) {
+          // Silently fail - cost tracking is optional
+          console.warn(`Failed to calculate cost for ${request.model}:`, error);
+        }
+      } else if (response.usage && response.usage.totalTokens) {
+        // Some models (like Gemini) don't provide prompt/completion breakdown
+        // Log a warning so users know cost tracking won't work for these models
+        console.warn(
+          `Model ${request.model} doesn't provide prompt/completion token breakdown. ` +
+          `Cost tracking requires separate prompt and completion token counts. ` +
+          `Total tokens: ${response.usage.totalTokens}`
+        );
+      }
 
       await this.config.logger.log(logData);
     }

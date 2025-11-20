@@ -47,6 +47,7 @@ try {
       "project_id", "workflow_id", "run_id", "step_id",
       "timestamp", "duration_ms", "status",
       "model", "prompt_tokens", "completion_tokens", "total_tokens",
+      "prompt_cost_usd", "completion_cost_usd", "total_cost_usd",
       "finish_reason", "error"
     ];
 
@@ -62,6 +63,9 @@ try {
       step.promptTokens || "",
       step.completionTokens || "",
       step.totalTokens || "",
+      step.promptCostUsd || "",
+      step.completionCostUsd || "",
+      step.totalCostUsd || "",
       step.finishReason || "",
       step.error || ""
     ]);

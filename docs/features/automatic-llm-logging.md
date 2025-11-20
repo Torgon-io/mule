@@ -1,8 +1,8 @@
 # Automatic LLM Call Logging
 
-**Status:** 🟡 Planned
+**Status:** ✅ Implemented
 **Version:** 1.0
-**Last Updated:** 2025-11-18
+**Last Updated:** 2025-11-19
 
 ## Overview
 
@@ -34,6 +34,11 @@ Each LLM call (via `ai.generate()` or `ai.generateObject()`) logs:
 - `totalTokens` - Total tokens used (prompt + completion)
 - `cacheCreationTokens` - Tokens cached (if applicable)
 - `cacheReadTokens` - Tokens read from cache (if applicable)
+
+### Cost Tracking
+- `promptCostUsd` - Cost for input/prompt tokens in USD
+- `completionCostUsd` - Cost for output/completion tokens in USD
+- `totalCostUsd` - Total inference cost in USD (prompt + completion)
 
 ### Performance
 - `duration` - Time in milliseconds from request to response
@@ -278,6 +283,54 @@ const workflow = mule.createWorkflow();
 - Logs warning if no project ID configured
 - Logging still occurs with `projectId: "unknown"`
 
+## Cost Tracking
+
+Mule automatically tracks inference costs for all LLM calls by fetching real-time pricing from the OpenRouter API.
+
+### How It Works
+
+1. **Automatic Cost Calculation:** When a step makes an LLM call, the AI service:
+   - Fetches pricing data for the model from OpenRouter
+   - Calculates `promptCost = promptTokens × promptPrice`
+   - Calculates `completionCost = completionTokens × completionPrice`
+   - Stores cost data alongside token usage in the database
+
+2. **Pricing Cache:** The pricing service maintains a 24-hour cache to minimize API calls and ensure fast cost calculation without blocking step execution.
+
+3. **Non-Blocking:** Cost calculation happens asynchronously and won't delay workflow execution. If pricing is unavailable, the cost fields remain `null` but the workflow continues.
+
+### Viewing Cost Analytics
+
+Use the stats script to view cost breakdowns:
+
+```bash
+deno task stats --project my-project
+```
+
+Output includes:
+- **Total cost** across all executions
+- **Cost per step** average
+- **Cost by model** to identify expensive models
+- **Cost by workflow** to track which workflows consume the most
+- **Cost by date** to monitor spending trends
+
+### Database Schema
+
+Cost data is stored in three columns in the `step_executions` table:
+- `prompt_cost_usd` - Cost for input tokens
+- `completion_cost_usd` - Cost for output tokens
+- `total_cost_usd` - Total inference cost
+
+### Export Cost Data
+
+Export cost data to CSV for analysis:
+
+```bash
+deno task export --project my-project --format csv --output costs.csv
+```
+
+The CSV includes all cost columns for importing into spreadsheets or BI tools.
+
 ## Future Enhancements
 
 ### Database Persistence
@@ -294,10 +347,19 @@ const workflow = mule.createWorkflow();
 - Stream logs to external services (Datadog, CloudWatch, etc.)
 - WebSocket/HTTP endpoint support
 
-### Cost Calculation
-- Add model pricing information
-- Calculate estimated cost per call
-- Aggregate costs by step/workflow/project
+### ✅ Cost Calculation (Implemented)
+Cost tracking is automatically enabled for all LLM calls:
+- Fetches real-time pricing from OpenRouter API
+- Calculates separate costs for prompt and completion tokens
+- Non-blocking implementation (doesn't delay step execution)
+- Cost data is stored in the persistence layer
+- Analytics scripts show cost breakdowns by model, workflow, and date
+
+**Pricing Service:**
+- Caches pricing data for 24 hours to minimize API calls
+- Background refresh to keep pricing current
+- Graceful degradation if pricing unavailable (cost fields remain null)
+- Supports OpenRouter's pricing model with separate prompt/completion rates
 
 ### Sampling
 - Configure sampling rate (e.g., log 10% of calls)

@@ -93,6 +93,11 @@ export class SQLiteRepository implements StepExecutionRepository {
         total_tokens INTEGER,
         finish_reason TEXT,
 
+        -- Cost metrics (USD)
+        prompt_cost_usd REAL,
+        completion_cost_usd REAL,
+        total_cost_usd REAL,
+
         -- Status
         status TEXT NOT NULL,
         error TEXT
@@ -102,6 +107,24 @@ export class SQLiteRepository implements StepExecutionRepository {
       CREATE INDEX IF NOT EXISTS idx_workflow_run ON step_executions(workflow_id, run_id);
       CREATE INDEX IF NOT EXISTS idx_timestamp ON step_executions(timestamp DESC);
     `);
+
+    // Migrate existing databases by adding cost columns if they don't exist
+    this.migrateAddCostColumns();
+  }
+
+  /**
+   * Add cost columns to existing databases
+   */
+  private migrateAddCostColumns(): void {
+    try {
+      this.db.exec(`
+        ALTER TABLE step_executions ADD COLUMN prompt_cost_usd REAL;
+        ALTER TABLE step_executions ADD COLUMN completion_cost_usd REAL;
+        ALTER TABLE step_executions ADD COLUMN total_cost_usd REAL;
+      `);
+    } catch {
+      // Columns already exist, ignore error
+    }
   }
 
   /**
@@ -114,8 +137,9 @@ export class SQLiteRepository implements StepExecutionRepository {
         timestamp, duration_ms,
         model, prompt, result,
         prompt_tokens, completion_tokens, total_tokens, finish_reason,
+        prompt_cost_usd, completion_cost_usd, total_cost_usd,
         status, error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       execution.projectId,
       execution.workflowId,
@@ -130,6 +154,9 @@ export class SQLiteRepository implements StepExecutionRepository {
       execution.completionTokens ?? null,
       execution.totalTokens ?? null,
       execution.finishReason ?? null,
+      execution.promptCostUsd ?? null,
+      execution.completionCostUsd ?? null,
+      execution.totalCostUsd ?? null,
       execution.status,
       execution.error ?? null
     );
@@ -149,6 +176,7 @@ export class SQLiteRepository implements StepExecutionRepository {
         timestamp, duration_ms,
         model, prompt, result,
         prompt_tokens, completion_tokens, total_tokens, finish_reason,
+        prompt_cost_usd, completion_cost_usd, total_cost_usd,
         status, error
       FROM step_executions
       WHERE project_id = ? AND workflow_id = ? AND run_id = ?
@@ -171,6 +199,7 @@ export class SQLiteRepository implements StepExecutionRepository {
         timestamp, duration_ms,
         model, prompt, result,
         prompt_tokens, completion_tokens, total_tokens, finish_reason,
+        prompt_cost_usd, completion_cost_usd, total_cost_usd,
         status, error
       FROM step_executions
       WHERE project_id = ?
@@ -206,6 +235,9 @@ export class SQLiteRepository implements StepExecutionRepository {
       completionTokens: (row.completion_tokens as number | null) ?? undefined,
       totalTokens: (row.total_tokens as number | null) ?? undefined,
       finishReason: (row.finish_reason as string | null) ?? undefined,
+      promptCostUsd: (row.prompt_cost_usd as number | null) ?? undefined,
+      completionCostUsd: (row.completion_cost_usd as number | null) ?? undefined,
+      totalCostUsd: (row.total_cost_usd as number | null) ?? undefined,
       status: row.status as "success" | "error",
       error: (row.error as string | null) ?? undefined,
     };

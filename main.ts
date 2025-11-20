@@ -305,11 +305,11 @@ class Mule {
   }
 }
 
-function createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(
-  state?: Record<string, unknown>,
-  inputSchema?: TInputSchema,
-  id?: string
-): Workflow<z.infer<TInputSchema>> {
+function createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(params?: {
+  state?: Record<string, unknown>;
+  inputSchema?: TInputSchema;
+  id?: string;
+}): Workflow<z.infer<TInputSchema>> {
   console.warn(
     "[Mule] Using createWorkflow() without Mule instance is deprecated. " +
       "Use: const mule = new Mule('projectId'); const workflow = mule.createWorkflow();"
@@ -317,7 +317,7 @@ function createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(
 
   // Use default Mule instance
   const defaultMule = new Mule();
-  return defaultMule.createWorkflow({ state, inputSchema, id });
+  return defaultMule.createWorkflow(params);
 }
 
 export { createStep, createWorkflow, Workflow, Mule, SQLiteRepository, RepositoryLogger };
