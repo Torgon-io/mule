@@ -372,17 +372,22 @@
                 <div class="mt-2 json-viewer">${syntaxHighlight(exec.promptParsed)}</div>
               </details>
             ` : ''}
-
-            <!-- Expandable Result -->
-            ${exec.resultParsed ? `
-              <details>
-                <summary class="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900 py-1">
-                  View Result
-                </summary>
-                <div class="mt-2 json-viewer">${syntaxHighlight(exec.resultParsed)}</div>
-              </details>
-            ` : ''}
           </div>
+
+          <!-- Step Output (placed between steps) -->
+          ${exec.resultParsed ? `
+            <div class="pl-8 pr-4 py-3">
+              <details>
+                <summary class="cursor-pointer text-sm font-medium text-blue-700 hover:text-blue-900 py-1 flex items-center gap-2">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
+                  </svg>
+                  View Step Output
+                </summary>
+                <div class="mt-2 ml-6 json-viewer">${syntaxHighlight(exec.resultParsed)}</div>
+              </details>
+            </div>
+          ` : ''}
         `;
       });
 

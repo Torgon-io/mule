@@ -142,15 +142,6 @@ export class AIService {
       model: openrouter(request.model),
     });
     const duration = Date.now() - startTime;
-    console.log("DEBUG - Response structure:", JSON.stringify({
-      usage: response.usage,
-      finishReason: response.finishReason,
-      hasContent: !!response.content,
-      providerMetadata: (response as any).providerMetadata,
-      rawResponse: (response as any).rawResponse ? "exists" : "missing",
-      id: (response as any).id,
-      allKeys: Object.keys(response),
-    }, null, 2));
     this.storeRequestMetadata(request, response, duration, "not implemented");
     return response.content;
   }
@@ -167,14 +158,6 @@ export class AIService {
         ...request,
         model: openrouter(request.model),
       });
-      console.log("DEBUG - generateObject Response structure:", JSON.stringify({
-        usage: reponse.usage,
-        finishReason: reponse.finishReason,
-        hasObject: !!reponse.object,
-        providerMetadata: (reponse as any).providerMetadata,
-        experimental_providerMetadata: (reponse as any).experimental_providerMetadata,
-        allKeys: Object.keys(reponse),
-      }, null, 2));
       const duration = Date.now() - startTime;
       this.storeRequestMetadata(request, reponse, duration, reponse.object);
 
