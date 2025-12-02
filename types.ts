@@ -3,9 +3,13 @@
  */
 
 import type { PersistenceConfig, StepExecution, StepExecutionRepository } from "./persistence.ts";
+import type { ModelMessage } from "ai";
 
 // Re-export persistence types
 export type { PersistenceConfig, StepExecution, StepExecutionRepository };
+
+// Re-export AI types for convenience
+export type { ModelMessage };
 
 /**
  * Logger interface for custom logging implementations
@@ -23,8 +27,15 @@ export interface LLMCallLog {
   runId: string;
   stepId: string;
   timestamp: string;
+
+  // Hierarchical execution metadata
+  parentStepId?: string;
+  executionGroup?: string;
+  executionType?: "sequential" | "parallel" | "branch";
+  depth?: number;
+
   model?: string;
-  messages?: Array<{ role: string; content: string }>;
+  messages?: ModelMessage[];
   result?: string;
   usage?: {
     promptTokens?: number;

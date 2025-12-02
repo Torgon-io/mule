@@ -1,7 +1,7 @@
 import { SQLiteRepository } from "../sqlite-repository.ts";
 
 const repo = new SQLiteRepository();
-const PORT = 8080;
+const PORT = Deno.env.get("PORT") ? Number(Deno.env.get("PORT")) : 3030;
 
 // Helper to parse JSON safely
 function tryParseJSON(str: string | undefined): unknown {
@@ -15,11 +15,15 @@ function tryParseJSON(str: string | undefined): unknown {
 
 // API Handlers
 async function handleProjects(): Promise<Response> {
-  const projects = repo.db.prepare(`
+  const projects = repo.db
+    .prepare(
+      `
     SELECT DISTINCT project_id
     FROM step_executions
     ORDER BY project_id
-  `).all<{ project_id: string }>();
+  `
+    )
+    .all<{ project_id: string }>();
 
   return new Response(JSON.stringify(projects.map((p) => p.project_id)), {
     headers: { "Content-Type": "application/json" },
@@ -27,7 +31,9 @@ async function handleProjects(): Promise<Response> {
 }
 
 async function handleRuns(projectId: string): Promise<Response> {
-  const runs = repo.db.prepare(`
+  const runs = repo.db
+    .prepare(
+      `
     SELECT
       project_id,
       workflow_id,
@@ -43,7 +49,9 @@ async function handleRuns(projectId: string): Promise<Response> {
     GROUP BY project_id, workflow_id, run_id
     ORDER BY start_time DESC
     LIMIT 100
-  `).all(projectId);
+  `
+    )
+    .all(projectId);
 
   return new Response(JSON.stringify(runs), {
     headers: { "Content-Type": "application/json" },
@@ -53,7 +61,7 @@ async function handleRuns(projectId: string): Promise<Response> {
 async function handleRunDetails(
   projectId: string,
   workflowId: string,
-  runId: string,
+  runId: string
 ): Promise<Response> {
   const executions = await repo.getWorkflowRun(projectId, workflowId, runId);
 
@@ -126,7 +134,7 @@ async function handleRequest(req: Request): Promise<Response> {
       if (parts.length !== 5) {
         return new Response(
           "Invalid format. Use: /api/run/:projectId/:workflowId/:runId",
-          { status: 400 },
+          { status: 400 }
         );
       }
       const [, , projectId, workflowId, runId] = parts;

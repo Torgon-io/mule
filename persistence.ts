@@ -14,6 +14,12 @@ export interface StepExecution {
   runId: string;
   stepId: string;
 
+  // Hierarchical execution metadata
+  parentStepId?: string; // ID of parent step (for nested workflows)
+  executionGroup?: string; // UUID for parallel/branch execution batches
+  executionType?: "sequential" | "parallel" | "branch"; // How this step was executed
+  depth?: number; // Nesting level (0 = top-level, 1+ = nested)
+
   // Timing information
   timestamp: string; // ISO 8601 format
   durationMs?: number;
@@ -101,6 +107,13 @@ export class RepositoryLogger implements Logger {
       runId: data.runId,
       stepId: data.stepId,
       timestamp: data.timestamp,
+
+      // Hierarchical execution metadata
+      parentStepId: data.parentStepId,
+      executionGroup: data.executionGroup,
+      executionType: data.executionType,
+      depth: data.depth,
+
       durationMs: data.duration,
       model: data.model,
       prompt: data.messages ? JSON.stringify(data.messages) : undefined,

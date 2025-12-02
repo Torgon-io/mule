@@ -1,6 +1,6 @@
-import { z } from "npm:zod@^4.1.12";
+import { z } from "zod";
 import { AIService } from "./ai.ts";
-import type { Logger, LLMCallLog, MuleOptions } from "./types.ts";
+import type { Logger, LLMCallLog, MuleOptions, ModelMessage } from "./types.ts";
 import {
   RepositoryLogger,
   type PersistenceConfig,
@@ -9,8 +9,11 @@ import {
 import { SQLiteRepository } from "./sqlite-repository.ts";
 
 // Re-export types for convenience
-export type { Logger, LLMCallLog, MuleOptions };
-export type { PersistenceConfig, StepExecutionRepository } from "./persistence.ts";
+export type { Logger, LLMCallLog, MuleOptions, ModelMessage };
+export type {
+  PersistenceConfig,
+  StepExecutionRepository,
+} from "./persistence.ts";
 export type { StepExecution } from "./persistence.ts";
 
 /**
@@ -26,9 +29,11 @@ type Step<TInput, TOutput, TState, TId extends string = string> = {
   id: TId;
   outputSchema: { parse: (data: unknown) => TOutput };
   inputSchema: { parse: (data: unknown) => TInput };
+  stateSchema?: { parse: (data: unknown) => TState };
   executor: (data: {
     input: TInput;
     state: TState;
+    setState: (newState: Partial<TState>) => void;
     ai: AIService;
   }) => Promise<TOutput>;
   onError?: (
@@ -41,33 +46,46 @@ function createStep<
   TId extends string,
   TInputSchema extends z.ZodTypeAny,
   TOutputSchema extends z.ZodTypeAny,
-  TState = any
+  TStateSchema extends z.ZodTypeAny = z.ZodObject<Record<string, never>>
 >(config: {
   id: TId;
   inputSchema: TInputSchema;
   outputSchema: TOutputSchema;
+  stateSchema?: TStateSchema;
   executor: (data: {
     input: z.infer<TInputSchema>;
-    state: TState;
+    state: z.infer<TStateSchema>;
+    setState: (newState: Partial<z.infer<TStateSchema>>) => void;
     ai: AIService;
   }) => Promise<z.infer<TOutputSchema>>;
   onError?: (
     error: Error,
-    data: { input: z.infer<TInputSchema>; state: TState }
+    data: { input: z.infer<TInputSchema>; state: z.infer<TStateSchema> }
   ) => Promise<void>;
-}): Step<z.infer<TInputSchema>, z.infer<TOutputSchema>, TState, TId> {
+}): Step<z.infer<TInputSchema>, z.infer<TOutputSchema>, z.infer<TStateSchema>, TId> {
   return {
     id: config.id,
     inputSchema: config.inputSchema,
     outputSchema: config.outputSchema,
+    stateSchema: config.stateSchema,
     executor: config.executor,
     onError: config.onError,
   };
 }
 
-class Workflow<TCurrentOutput = undefined> {
+/**
+ * Execution context for tracking hierarchical step execution
+ */
+interface ExecutionContext {
+  parentStepId?: string;
+  executionGroup?: string;
+  executionType?: "sequential" | "parallel" | "branch";
+  depth: number;
+}
+
+class Workflow<TCurrentOutput = undefined, TState = Record<string, unknown>> {
   id: string = "";
-  state: Record<string, any> = {};
+  state: TState;
   lastOutput: any = null;
   inputSchema: z.ZodTypeAny;
   private steps: Array<() => Promise<void>> = [];
@@ -76,9 +94,12 @@ class Workflow<TCurrentOutput = undefined> {
   projectId: string = "unknown";
   logger: Logger | null = null;
 
+  // Execution context for hierarchical tracking
+  private executionContext: ExecutionContext = { depth: 0 };
+
   constructor(
     workflowId: string,
-    state: Record<string, any> = {},
+    state: TState,
     inputSchema: z.ZodTypeAny = z.undefined()
   ) {
     this.workflowId = workflowId;
@@ -89,29 +110,69 @@ class Workflow<TCurrentOutput = undefined> {
 
   onError(
     _error: Error,
-    _data: { input: TCurrentOutput; state: Record<string, any> }
+    _data: { input: TCurrentOutput; state: TState }
   ): Promise<void> {
     // Default no-op error handler for the workflow itself
     return Promise.resolve();
   }
 
-  addStep<TOutput>(
-    step: Step<TCurrentOutput, TOutput, any> | Workflow<TCurrentOutput>
-  ): Workflow<TOutput> {
+  /**
+   * Add a step to the workflow.
+   *
+   * Steps can declare their state requirements via `stateSchema`. The workflow's state
+   * must satisfy the step's requirements (the step's state type should be a subset of
+   * the workflow's state type).
+   *
+   * When adding a step, its state requirements are accumulated into the workflow's
+   * state type, ensuring subsequent steps can access properties set by earlier steps.
+   *
+   * Nested workflows inherit the parent's state and can modify it, but don't affect
+   * the parent's state type (they use `any` for state to allow flexible composition).
+   */
+  addStep<TOutput, TStepState extends Record<string, unknown> = Record<string, never>>(
+    step: Step<TCurrentOutput, TOutput, TStepState> | Workflow<TOutput, any>
+  ): Workflow<TOutput, TState & TStepState> {
     this.steps.push(async () => {
-      this.lastOutput = await this.runStepExecution(step, this.lastOutput);
+      this.lastOutput = await this.runStepExecution(step as any, this.lastOutput, {
+        ...this.executionContext,
+        executionType: "sequential",
+      });
     });
-    return this as any as Workflow<TOutput>;
+    return this as any as Workflow<TOutput, TState & TStepState>;
   }
 
   async run(
-    runId: string = "",
-    initialInput?: TCurrentOutput
+    paramsOrRunId?: string | {
+      runId?: string;
+      initialInput?: TCurrentOutput;
+      initialState?: Record<string, unknown>;
+    },
+    initialInput?: TCurrentOutput,
+    initialState?: Record<string, unknown>
   ): Promise<TCurrentOutput> {
-    this.runId = runId || crypto.randomUUID();
-    if (initialInput !== undefined) {
-      this.lastOutput = initialInput;
+    // Handle both old signature (positional params) and new signature (named params)
+    if (typeof paramsOrRunId === 'string' || paramsOrRunId === undefined) {
+      // Old signature: run(runId?, initialInput?, initialState?)
+      this.runId = paramsOrRunId || crypto.randomUUID();
+      if (initialInput !== undefined) {
+        this.lastOutput = initialInput;
+      }
+      if (initialState !== undefined) {
+        // Shallow merge: initialState values override existing state values
+        this.state = { ...this.state, ...initialState };
+      }
+    } else {
+      // New signature: run({ runId?, initialInput?, initialState? })
+      this.runId = paramsOrRunId.runId || crypto.randomUUID();
+      if (paramsOrRunId.initialInput !== undefined) {
+        this.lastOutput = paramsOrRunId.initialInput;
+      }
+      if (paramsOrRunId.initialState !== undefined) {
+        // Shallow merge: initialState values override existing state values
+        this.state = { ...this.state, ...paramsOrRunId.initialState };
+      }
     }
+
     for (const stepFn of this.steps) {
       await stepFn();
     }
@@ -122,16 +183,25 @@ class Workflow<TCurrentOutput = undefined> {
     return this.lastOutput;
   }
 
-  getState(): Record<string, unknown> {
+  getState(): TState {
     return this.state;
   }
 
-  parallel<TSteps extends readonly Step<TCurrentOutput, any, any, any>[]>(
+  parallel<TSteps extends readonly Step<TCurrentOutput, any, TState, any>[]>(
     steps: [...TSteps]
-  ): Workflow<any> {
+  ): Workflow<any, TState> {
     this.steps.push(async () => {
+      // Generate a unique execution group for this parallel batch
+      const executionGroup = crypto.randomUUID();
+
       const results = await Promise.all(
-        steps.map((step) => this.runStepExecution(step, this.lastOutput))
+        steps.map((step) =>
+          this.runStepExecution(step, this.lastOutput, {
+            ...this.executionContext,
+            executionGroup,
+            executionType: "parallel",
+          })
+        )
       );
       this.lastOutput = Object.fromEntries(
         steps.map((s, i) => {
@@ -145,10 +215,10 @@ class Workflow<TCurrentOutput = undefined> {
 
   branch(
     conditionalSteps: [
-      step: Step<TCurrentOutput, any, any>,
+      step: Step<TCurrentOutput, any, TState>,
       condition: (output: TCurrentOutput) => boolean
     ][]
-  ): Workflow<any> {
+  ): Workflow<any, TState> {
     this.steps.push(async () => {
       const stepsToRun = conditionalSteps
         .filter(([_, condition]) => condition(this.lastOutput))
@@ -159,8 +229,17 @@ class Workflow<TCurrentOutput = undefined> {
         return;
       }
 
+      // Generate a unique execution group for this branch batch
+      const executionGroup = crypto.randomUUID();
+
       const results = await Promise.all(
-        stepsToRun.map((step) => this.runStepExecution(step, this.lastOutput))
+        stepsToRun.map((step) =>
+          this.runStepExecution(step, this.lastOutput, {
+            ...this.executionContext,
+            executionGroup,
+            executionType: "branch",
+          })
+        )
       );
       this.lastOutput = Object.fromEntries(
         stepsToRun.map((s, i) => [s.id, results[i]])
@@ -170,30 +249,55 @@ class Workflow<TCurrentOutput = undefined> {
   }
 
   private async runStepExecution(
-    step: Step<any, any, any> | Workflow<any>,
-    input: any
+    step: Step<any, any, any> | Workflow<any, any>,
+    input: any,
+    context: ExecutionContext
   ) {
+    console.log(
+      `[Workflow ${this.runId}] Executing step: ${
+        step instanceof Workflow ? `Workflow(${step.workflowId})` : step.id
+      }`
+    );
     try {
       if (step instanceof Workflow) {
         step.state = this.state;
-        // Nested workflow inherits parent config
+        // Nested workflow inherits parent config and execution context
         step.projectId = this.projectId;
         step.logger = this.logger;
-        const output = await step.run(
-          `${this.runId}->${step.workflowId}`,
-          input
-        );
+        step.executionContext = {
+          ...context,
+          parentStepId: step.workflowId,
+          depth: context.depth + 1,
+        };
+        const output = await step.run({
+          runId: `${this.runId}->${step.workflowId}`,
+          initialInput: input
+        });
+        // Sync state back from nested workflow to parent
+        this.state = step.state as TState;
         return output;
       }
+      // Create setState function that merges partial state updates
+      const setState = (newState: Partial<TState>) => {
+        this.state = { ...this.state, ...newState };
+      };
+
       const output = await step.executor({
         input,
         state: this.state,
+        setState,
         ai: new AIService({
           projectId: this.projectId,
           workflowId: this.workflowId,
           runId: this.runId,
           stepId: step.id,
           logger: this.logger,
+
+          // Pass execution context to AIService
+          parentStepId: context.parentStepId,
+          executionGroup: context.executionGroup,
+          executionType: context.executionType,
+          depth: context.depth,
         }),
       });
       return output;
@@ -285,15 +389,18 @@ class Mule {
     return this.repository;
   }
 
-  createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(params?: {
-    state?: Record<string, unknown>;
+  createWorkflow<
+    TInputSchema extends z.ZodTypeAny = z.ZodUndefined,
+    TState = Record<string, unknown>
+  >(params?: {
+    state?: TState;
     inputSchema?: TInputSchema;
     id?: string;
-  }): Workflow<z.infer<TInputSchema>> {
+  }): Workflow<z.infer<TInputSchema>, TState> {
     const workflowId = params?.id || crypto.randomUUID();
-    const workflow = new Workflow<z.infer<TInputSchema>>(
+    const workflow = new Workflow<z.infer<TInputSchema>, TState>(
       workflowId,
-      params?.state || {},
+      params?.state || ({} as TState),
       params?.inputSchema || (z.undefined() as any)
     );
 
@@ -305,11 +412,14 @@ class Mule {
   }
 }
 
-function createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(params?: {
-  state?: Record<string, unknown>;
+function createWorkflow<
+  TInputSchema extends z.ZodTypeAny = z.ZodUndefined,
+  TState = Record<string, unknown>
+>(params?: {
+  state?: TState;
   inputSchema?: TInputSchema;
   id?: string;
-}): Workflow<z.infer<TInputSchema>> {
+}): Workflow<z.infer<TInputSchema>, TState> {
   console.warn(
     "[Mule] Using createWorkflow() without Mule instance is deprecated. " +
       "Use: const mule = new Mule('projectId'); const workflow = mule.createWorkflow();"
@@ -317,10 +427,17 @@ function createWorkflow<TInputSchema extends z.ZodTypeAny = z.ZodUndefined>(para
 
   // Use default Mule instance
   const defaultMule = new Mule();
-  return defaultMule.createWorkflow(params);
+  return defaultMule.createWorkflow<TInputSchema, TState>(params);
 }
 
-export { createStep, createWorkflow, Workflow, Mule, SQLiteRepository, RepositoryLogger };
+export {
+  createStep,
+  createWorkflow,
+  Workflow,
+  Mule,
+  SQLiteRepository,
+  RepositoryLogger,
+};
 
 export default {
   createStep,

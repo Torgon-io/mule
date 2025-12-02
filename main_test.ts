@@ -43,6 +43,64 @@ Deno.test("Workflow - sequential steps", async () => {
   assertEquals(result, 4);
 });
 
+Deno.test("Workflow - nested workflow as step", async () => {
+  // Create a nested workflow that expects sourceDocumentation and outputs documentationAnalysis
+  const nestedWorkflow = createWorkflow({
+    id: "nested-workflow",
+    inputSchema: z.object({
+      sourceDocumentation: z.string(),
+    }),
+  }).addStep(
+    createStep({
+      id: "analyze",
+      inputSchema: z.object({
+        sourceDocumentation: z.string(),
+      }),
+      outputSchema: z.object({
+        documentationAnalysis: z.string(),
+      }),
+      executor: async ({ input }) => {
+        return {
+          documentationAnalysis: `Analysis of: ${input.sourceDocumentation}`,
+        };
+      },
+    })
+  );
+
+  // Create main workflow with a step that outputs sourceDocumentation
+  const mainWorkflow = createWorkflow()
+    .addStep(
+      createStep({
+        id: "load-docs",
+        inputSchema: z.undefined(),
+        outputSchema: z.object({
+          sourceDocumentation: z.string(),
+        }),
+        executor: async () => {
+          return {
+            sourceDocumentation: "Test documentation content",
+          };
+        },
+      })
+    )
+    .addStep(nestedWorkflow)
+    .addStep(
+      createStep({
+        id: "process-analysis",
+        inputSchema: z.object({
+          documentationAnalysis: z.string(),
+        }),
+        outputSchema: z.string(),
+        executor: async ({ input }) => {
+          return input.documentationAnalysis.toUpperCase();
+        },
+      })
+    );
+
+  const result = await mainWorkflow.run();
+  assertEquals(result, "ANALYSIS OF: TEST DOCUMENTATION CONTENT");
+});
+
 Deno.test("Workflow - parallel execution", async () => {
   const step1 = createStep({
     id: "step1",
@@ -233,7 +291,7 @@ Deno.test("Workflow - initialization with inputSchema", () => {
     age: z.number(),
   });
 
-  const workflow = createWorkflow({}, userInputSchema);
+  const workflow = createWorkflow({ inputSchema: userInputSchema });
 
   assertEquals(workflow.inputSchema, userInputSchema);
 });
@@ -255,7 +313,7 @@ Deno.test("Workflow - first step with workflow inputSchema", async () => {
     },
   });
 
-  const workflow = createWorkflow<UserInput>({}, userInputSchema);
+  const workflow = createWorkflow({ inputSchema: userInputSchema });
   workflow.lastOutput = { name: "Test User", count: 42 };
 
   const result = await workflow.addStep(step1).run();
@@ -296,7 +354,10 @@ Deno.test("Workflow - inputSchema with initial state and typed input", async () 
     },
   });
 
-  const workflow = createWorkflow<WorkflowInput>({ extraData: "test" }, inputSchema);
+  const workflow = createWorkflow({
+    state: { extraData: "test" },
+    inputSchema: inputSchema
+  });
   workflow.lastOutput = { userId: "user123", initialValue: 5 };
 
   const result = await workflow.addStep(step1).addStep(step2).run();
@@ -609,7 +670,7 @@ Deno.test("Workflow as Step - nested workflow receives input from parent", async
     },
   });
 
-  const innerWorkflow = createWorkflow<string>();
+  const innerWorkflow = createWorkflow({ inputSchema: z.string() });
   innerWorkflow.addStep(innerStep);
 
   const outerStep = createStep({
@@ -649,7 +710,7 @@ Deno.test("Workflow as Step - nested workflow returns output to parent", async (
     },
   });
 
-  const innerWorkflow = createWorkflow<number>();
+  const innerWorkflow = createWorkflow({ inputSchema: z.number() });
   innerWorkflow.addStep(innerStep1).addStep(innerStep2);
 
   const outerStep1 = createStep({
@@ -692,7 +753,7 @@ Deno.test("Workflow as Step - state is shared between parent and nested workflow
     },
   });
 
-  const innerWorkflow = createWorkflow<string>();
+  const innerWorkflow = createWorkflow({ inputSchema: z.string() });
   innerWorkflow.addStep(innerStep);
 
   const outerStep1 = createStep({
@@ -740,7 +801,7 @@ Deno.test("Workflow as Step - state is shared between parent and nested workflow
 });
 
 Deno.test("Workflow as Step - multiple nested workflows in sequence", async () => {
-  const workflow1 = createWorkflow<number>();
+  const workflow1 = createWorkflow({ inputSchema: z.number() });
   workflow1.addStep(createStep({
     id: "w1step",
     inputSchema: z.number(),
@@ -748,7 +809,7 @@ Deno.test("Workflow as Step - multiple nested workflows in sequence", async () =
     executor: async ({ input }) => input + 10,
   }));
 
-  const workflow2 = createWorkflow<number>();
+  const workflow2 = createWorkflow({ inputSchema: z.number() });
   workflow2.addStep(createStep({
     id: "w2step",
     inputSchema: z.number(),
@@ -756,7 +817,7 @@ Deno.test("Workflow as Step - multiple nested workflows in sequence", async () =
     executor: async ({ input }) => input * 2,
   }));
 
-  const workflow3 = createWorkflow<number>();
+  const workflow3 = createWorkflow({ inputSchema: z.number() });
   workflow3.addStep(createStep({
     id: "w3step",
     inputSchema: z.number(),
@@ -784,7 +845,7 @@ Deno.test("Workflow as Step - multiple nested workflows in sequence", async () =
 });
 
 Deno.test("Workflow as Step - nested workflow in parallel execution", async () => {
-  const innerWorkflow1 = createWorkflow<string>();
+  const innerWorkflow1 = createWorkflow({ inputSchema: z.string() });
   innerWorkflow1.addStep(createStep({
     id: "inner1",
     inputSchema: z.string(),
@@ -792,7 +853,7 @@ Deno.test("Workflow as Step - nested workflow in parallel execution", async () =
     executor: async ({ input }) => input.length,
   }));
 
-  const innerWorkflow2 = createWorkflow<string>();
+  const innerWorkflow2 = createWorkflow({ inputSchema: z.string() });
   innerWorkflow2.addStep(createStep({
     id: "inner2",
     inputSchema: z.string(),
@@ -836,7 +897,7 @@ Deno.test("Workflow as Step - hierarchical workflow keys in error messages", asy
     },
   });
 
-  const innerWorkflow = createWorkflow<string>();
+  const innerWorkflow = createWorkflow({ inputSchema: z.string() });
   innerWorkflow.addStep(innerStep);
 
   const outerStep = createStep({
@@ -881,7 +942,7 @@ Deno.test("Workflow as Step - nested workflow with error handler", async () => {
     },
   });
 
-  const innerWorkflow = createWorkflow<string>();
+  const innerWorkflow = createWorkflow({ inputSchema: z.string() });
   innerWorkflow.addStep(innerStep);
 
   const outerStep = createStep({
@@ -911,7 +972,7 @@ Deno.test("Workflow as Step - nested workflow with error handler", async () => {
 
 Deno.test("Workflow as Step - deeply nested workflows", async () => {
   // Level 3 (deepest)
-  const level3Workflow = createWorkflow<number>();
+  const level3Workflow = createWorkflow({ inputSchema: z.number() });
   level3Workflow.addStep(createStep({
     id: "level3",
     inputSchema: z.number(),
@@ -920,7 +981,7 @@ Deno.test("Workflow as Step - deeply nested workflows", async () => {
   }));
 
   // Level 2
-  const level2Workflow = createWorkflow<number>();
+  const level2Workflow = createWorkflow({ inputSchema: z.number() });
   level2Workflow
     .addStep(createStep({
       id: "level2",
@@ -990,7 +1051,7 @@ Deno.test("Mule - defaults to unknown when no projectId provided", () => {
 
 Deno.test("Mule - creates workflow with initial state", () => {
   const mule = new Mule("test-project");
-  const workflow = mule.createWorkflow({ apiKey: "test-key", retryCount: 3 });
+  const workflow = mule.createWorkflow({ state: { apiKey: "test-key", retryCount: 3 } });
 
   assertEquals(workflow.getState().apiKey, "test-key");
   assertEquals(workflow.getState().retryCount, 3);
@@ -1004,7 +1065,7 @@ Deno.test("Mule - creates workflow with input schema", () => {
     email: z.string().email(),
   });
 
-  const workflow = mule.createWorkflow({}, inputSchema);
+  const workflow = mule.createWorkflow({ inputSchema });
 
   assertEquals(workflow.inputSchema, inputSchema);
   assertEquals(workflow.projectId, "test-project");
@@ -1020,6 +1081,7 @@ Deno.test("Mule - custom logger is used in workflows", () => {
 
   const mule = new Mule("integration-test", {
     logging: { logger: mockLogger },
+    persistence: false,
   });
 
   const workflow = mule.createWorkflow();

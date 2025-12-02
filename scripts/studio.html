@@ -180,6 +180,47 @@
       });
     }
 
+    // ===== Tree Building Functions =====
+
+    /**
+     * Build hierarchical tree structure from flat step list
+     */
+    function buildStepTree(executions) {
+      // Group steps by execution group
+      const groups = new Map();
+      const sequential = [];
+
+      executions.forEach(exec => {
+        if (exec.executionGroup) {
+          if (!groups.has(exec.executionGroup)) {
+            groups.set(exec.executionGroup, {
+              type: exec.executionType,
+              steps: [],
+              timestamp: exec.timestamp
+            });
+          }
+          groups.get(exec.executionGroup).steps.push(exec);
+        } else {
+          sequential.push(exec);
+        }
+      });
+
+      // Merge groups back into sequential timeline
+      const timeline = [];
+      const processedGroups = new Set();
+
+      executions.forEach(exec => {
+        if (exec.executionGroup && !processedGroups.has(exec.executionGroup)) {
+          processedGroups.add(exec.executionGroup);
+          timeline.push(groups.get(exec.executionGroup));
+        } else if (!exec.executionGroup) {
+          timeline.push(exec);
+        }
+      });
+
+      return timeline;
+    }
+
     // ===== Render Functions =====
 
     async function loadProjects() {
@@ -267,6 +308,87 @@
       });
     }
 
+    function renderStep(exec) {
+      const isError = exec.status === 'error';
+      const statusClass = isError ? 'error' : 'success';
+      const indentClass = exec.depth > 0 ? `ml-${exec.depth * 4}` : '';
+
+      return `
+        <div class="step-card ${statusClass} bg-white rounded-lg shadow p-4 ${indentClass}">
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <div class="font-semibold text-gray-900">${exec.stepId}</div>
+              <div class="text-xs text-gray-500 mt-0.5">${formatDate(exec.timestamp)}</div>
+              ${exec.depth > 0 ? `<span class="text-xs text-gray-400">Depth: ${exec.depth}</span>` : ''}
+            </div>
+            <div class="flex items-center gap-2">
+              ${exec.model ? `<span class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded">${exec.model}</span>` : ''}
+              <span class="text-xs px-2 py-1 ${isError ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'} rounded">
+                ${isError ? 'Error' : 'Success'}
+              </span>
+            </div>
+          </div>
+
+          <!-- Metrics Grid -->
+          <div class="grid grid-cols-5 gap-3 mb-3 text-sm">
+            <div>
+              <div class="text-gray-500 text-xs">Prompt Tokens</div>
+              <div class="font-medium">${formatTokens(exec.promptTokens)}</div>
+              ${exec.promptCostUsd ? `<div class="text-xs text-gray-500">${formatCost(exec.promptCostUsd)}</div>` : ''}
+            </div>
+            <div>
+              <div class="text-gray-500 text-xs">Completion</div>
+              <div class="font-medium">${formatTokens(exec.completionTokens)}</div>
+              ${exec.completionCostUsd ? `<div class="text-xs text-gray-500">${formatCost(exec.completionCostUsd)}</div>` : ''}
+            </div>
+            <div>
+              <div class="text-gray-500 text-xs">Total Tokens</div>
+              <div class="font-medium">${formatTokens(exec.totalTokens)}</div>
+            </div>
+            <div>
+              <div class="text-gray-500 text-xs">Total Cost</div>
+              <div class="font-medium text-green-600">${formatCost(exec.totalCostUsd)}</div>
+            </div>
+            <div>
+              <div class="text-gray-500 text-xs">Duration</div>
+              <div class="font-medium">${formatDuration(exec.durationMs)}</div>
+            </div>
+          </div>
+
+          ${exec.error ? `
+            <div class="mb-3 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-800">
+              <strong>Error:</strong> ${exec.error}
+            </div>
+          ` : ''}
+
+          <!-- Expandable Prompt -->
+          ${exec.promptParsed ? `
+            <details class="mb-2">
+              <summary class="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900 py-1">
+                View Prompt
+              </summary>
+              <div class="mt-2 json-viewer">${syntaxHighlight(exec.promptParsed)}</div>
+            </details>
+          ` : ''}
+        </div>
+
+        <!-- Step Output -->
+        ${exec.resultParsed ? `
+          <div class="pl-8 pr-4 py-3">
+            <details>
+              <summary class="cursor-pointer text-sm font-medium text-blue-700 hover:text-blue-900 py-1 flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
+                </svg>
+                View Step Output
+              </summary>
+              <div class="mt-2 ml-6 json-viewer">${syntaxHighlight(exec.resultParsed)}</div>
+            </details>
+          </div>
+        ` : ''}
+      `;
+    }
+
     async function loadRunDetails(projectId, workflowId, runId) {
       const detailsEl = document.getElementById('runDetails');
       detailsEl.innerHTML = '<div class="bg-white rounded-lg shadow p-8 text-center text-gray-500">Loading run details...</div>';
@@ -283,6 +405,9 @@
       const totalDuration = executions.reduce((sum, e) => sum + (e.durationMs || 0), 0);
       const totalCost = executions.reduce((sum, e) => sum + (e.totalCostUsd || 0), 0);
       const errorCount = executions.filter(e => e.status === 'error').length;
+
+      // Build tree structure
+      const timeline = buildStepTree(executions);
 
       // Build HTML
       let html = `
@@ -312,83 +437,29 @@
         <div class="space-y-3">
       `;
 
-      executions.forEach((exec, index) => {
-        const isError = exec.status === 'error';
-        const statusClass = isError ? 'error' : 'success';
-
-        html += `
-          <div class="step-card ${statusClass} bg-white rounded-lg shadow p-4">
-            <div class="flex items-start justify-between mb-3">
-              <div>
-                <div class="font-semibold text-gray-900">${exec.stepId}</div>
-                <div class="text-xs text-gray-500 mt-0.5">${formatDate(exec.timestamp)}</div>
+      // Render timeline with parallel groups
+      timeline.forEach(item => {
+        if (item.steps) {
+          // This is a parallel/branch group
+          const groupType = item.type === 'parallel' ? 'Parallel' : 'Branch';
+          html += `
+            <div class="bg-purple-50 border-2 border-purple-300 rounded-lg p-4">
+              <div class="flex items-center gap-2 mb-3">
+                <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12M8 12h12m-7 5h7"></path>
+                </svg>
+                <span class="font-semibold text-purple-900">${groupType} Execution Group</span>
+                <span class="text-xs text-purple-700">(${item.steps.length} steps)</span>
               </div>
-              <div class="flex items-center gap-2">
-                ${exec.model ? `<span class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded">${exec.model}</span>` : ''}
-                <span class="text-xs px-2 py-1 ${isError ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'} rounded">
-                  ${isError ? 'Error' : 'Success'}
-                </span>
-              </div>
-            </div>
-
-            <!-- Metrics Grid -->
-            <div class="grid grid-cols-5 gap-3 mb-3 text-sm">
-              <div>
-                <div class="text-gray-500 text-xs">Prompt Tokens</div>
-                <div class="font-medium">${formatTokens(exec.promptTokens)}</div>
-                ${exec.promptCostUsd ? `<div class="text-xs text-gray-500">${formatCost(exec.promptCostUsd)}</div>` : ''}
-              </div>
-              <div>
-                <div class="text-gray-500 text-xs">Completion</div>
-                <div class="font-medium">${formatTokens(exec.completionTokens)}</div>
-                ${exec.completionCostUsd ? `<div class="text-xs text-gray-500">${formatCost(exec.completionCostUsd)}</div>` : ''}
-              </div>
-              <div>
-                <div class="text-gray-500 text-xs">Total Tokens</div>
-                <div class="font-medium">${formatTokens(exec.totalTokens)}</div>
-              </div>
-              <div>
-                <div class="text-gray-500 text-xs">Total Cost</div>
-                <div class="font-medium text-green-600">${formatCost(exec.totalCostUsd)}</div>
-              </div>
-              <div>
-                <div class="text-gray-500 text-xs">Duration</div>
-                <div class="font-medium">${formatDuration(exec.durationMs)}</div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                ${item.steps.map(step => renderStep(step)).join('')}
               </div>
             </div>
-
-            ${exec.error ? `
-              <div class="mb-3 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-800">
-                <strong>Error:</strong> ${exec.error}
-              </div>
-            ` : ''}
-
-            <!-- Expandable Prompt -->
-            ${exec.promptParsed ? `
-              <details class="mb-2">
-                <summary class="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900 py-1">
-                  View Prompt
-                </summary>
-                <div class="mt-2 json-viewer">${syntaxHighlight(exec.promptParsed)}</div>
-              </details>
-            ` : ''}
-          </div>
-
-          <!-- Step Output (placed between steps) -->
-          ${exec.resultParsed ? `
-            <div class="pl-8 pr-4 py-3">
-              <details>
-                <summary class="cursor-pointer text-sm font-medium text-blue-700 hover:text-blue-900 py-1 flex items-center gap-2">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
-                  </svg>
-                  View Step Output
-                </summary>
-                <div class="mt-2 ml-6 json-viewer">${syntaxHighlight(exec.resultParsed)}</div>
-              </details>
-            </div>
-          ` : ''}
-        `;
+          `;
+        } else {
+          // This is a sequential step
+          html += renderStep(item);
+        }
       });
 
       html += '</div>';

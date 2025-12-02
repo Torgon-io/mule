@@ -12,13 +12,10 @@
     "jsr:@std/path@0.217": "0.217.0",
     "jsr:@std/path@1": "1.1.3",
     "jsr:@std/path@^1.1.3": "1.1.3",
-    "jsr:@zod/zod@*": "4.1.12",
-    "jsr:@zod/zod@^4.1.12": "4.1.12",
-    "npm:@openrouter/ai-sdk-provider@*": "1.2.3_ai@5.0.93__zod@3.25.76_zod@3.25.76",
-    "npm:@openrouter/ai-sdk-provider@^1.2.3": "1.2.3_ai@5.0.93__zod@3.25.76_zod@3.25.76",
-    "npm:ai@^5.0.93": "5.0.93_zod@3.25.76",
-    "npm:zod@^3.24.1": "3.25.76",
-    "npm:zod@^4.1.12": "4.1.12"
+    "npm:@openrouter/ai-sdk-provider@*": "1.2.8_ai@5.0.104__zod@4.1.13_zod@4.1.13",
+    "npm:@openrouter/ai-sdk-provider@^1.2.8": "1.2.8_ai@5.0.104__zod@4.1.13_zod@4.1.13",
+    "npm:ai@^5.0.93": "5.0.104_zod@4.1.13",
+    "npm:zod@^4.1.12": "4.1.13"
   },
   "jsr": {
     "@db/sqlite@0.12.0": {
@@ -73,28 +70,25 @@
       "dependencies": [
         "jsr:@std/internal"
       ]
-    },
-    "@zod/zod@4.1.12": {
-      "integrity": "5876ed4c6d44673faf5120f0a461a2ada2eb6c735329d3ebaf5ba1fc08387695"
     }
   },
   "npm": {
-    "@ai-sdk/gateway@2.0.9_zod@3.25.76": {
-      "integrity": "sha512-E6x4h5CPPPJ0za1r5HsLtHbeI+Tp3H+YFtcH8G3dSSPFE6w+PZINzB4NxLZmg1QqSeA5HTP3ZEzzsohp0o2GEw==",
+    "@ai-sdk/gateway@2.0.17_zod@4.1.13": {
+      "integrity": "sha512-oVAG6q72KsjKlrYdLhWjRO7rcqAR8CjokAbYuyVZoCO4Uh2PH/VzZoxZav71w2ipwlXhHCNaInGYWNs889MMDA==",
       "dependencies": [
         "@ai-sdk/provider",
         "@ai-sdk/provider-utils",
         "@vercel/oidc",
-        "zod@3.25.76"
+        "zod"
       ]
     },
-    "@ai-sdk/provider-utils@3.0.17_zod@3.25.76": {
-      "integrity": "sha512-TR3Gs4I3Tym4Ll+EPdzRdvo/rc8Js6c4nVhFLuvGLX/Y4V9ZcQMa/HTiYsHEgmYrf1zVi6Q145UEZUfleOwOjw==",
+    "@ai-sdk/provider-utils@3.0.18_zod@4.1.13": {
+      "integrity": "sha512-ypv1xXMsgGcNKUP+hglKqtdDuMg68nWHucPPAhIENrbFAI+xCHiqPVN8Zllxyv1TNZwGWUghPxJXU+Mqps0YRQ==",
       "dependencies": [
         "@ai-sdk/provider",
         "@standard-schema/spec",
         "eventsource-parser",
-        "zod@3.25.76"
+        "zod"
       ]
     },
     "@ai-sdk/provider@2.0.0": {
@@ -103,18 +97,18 @@
         "json-schema"
       ]
     },
-    "@openrouter/ai-sdk-provider@1.2.3_ai@5.0.93__zod@3.25.76_zod@3.25.76": {
-      "integrity": "sha512-a6Nc8dPRHakRH9966YJ/HZJhLOds7DuPTscNZDoAr+Aw+tEFUlacSJMvb/b3gukn74mgbuaJRji9YOn62ipfVg==",
+    "@openrouter/ai-sdk-provider@1.2.8_ai@5.0.104__zod@4.1.13_zod@4.1.13": {
+      "integrity": "sha512-pQT8AzZBKg9f4bkt4doF486ZlhK0XjKkevrLkiqYgfh1Jplovieu28nK4Y+xy3sF18/mxjqh9/2y6jh01qzLrA==",
       "dependencies": [
         "@openrouter/sdk",
         "ai",
-        "zod@3.25.76"
+        "zod"
       ]
     },
-    "@openrouter/sdk@0.1.11": {
-      "integrity": "sha512-OuPc8qqidL/PUM8+9WgrOfSR9+b6rKIWiezGcUJ54iPTdh+Gye5Qjut6hrLWlOCMZE7Z853gN90r1ft4iChj7Q==",
+    "@openrouter/sdk@0.1.27": {
+      "integrity": "sha512-RH//L10bSmc81q25zAZudiI4kNkLgxF2E+WU42vghp3N6TEvZ6F0jK7uT3tOxkEn91gzmMw9YVmDENy7SJsajQ==",
       "dependencies": [
-        "zod@4.1.12"
+        "zod"
       ]
     },
     "@opentelemetry/api@1.9.0": {
@@ -123,17 +117,17 @@
     "@standard-schema/spec@1.0.0": {
       "integrity": "sha512-m2bOd0f2RT9k8QJx1JN85cZYyH1RqFBdlwtkSlf4tBDYLCiiZnv1fIIwacK6cqwXavOydf0NPToMQgpKq+dVlA=="
     },
-    "@vercel/oidc@3.0.3": {
-      "integrity": "sha512-yNEQvPcVrK9sIe637+I0jD6leluPxzwJKx/Haw6F4H77CdDsszUn5V3o96LPziXkSNE2B83+Z3mjqGKBK/R6Gg=="
+    "@vercel/oidc@3.0.5": {
+      "integrity": "sha512-fnYhv671l+eTTp48gB4zEsTW/YtRgRPnkI2nT7x6qw5rkI1Lq2hTmQIpHPgyThI0znLK+vX2n9XxKdXZ7BUbbw=="
     },
-    "ai@5.0.93_zod@3.25.76": {
-      "integrity": "sha512-9eGcu+1PJgPg4pRNV4L7tLjRR3wdJC9CXQoNMvtqvYNOLZHFCzjHtVIOr2SIkoJJeu2+sOy3hyiSuTmy2MA40g==",
+    "ai@5.0.104_zod@4.1.13": {
+      "integrity": "sha512-MZOkL9++nY5PfkpWKBR3Rv+Oygxpb9S16ctv8h91GvrSif7UnNEdPMVZe3bUyMd2djxf0AtBk/csBixP0WwWZQ==",
       "dependencies": [
         "@ai-sdk/gateway",
         "@ai-sdk/provider",
         "@ai-sdk/provider-utils",
         "@opentelemetry/api",
-        "zod@3.25.76"
+        "zod"
       ]
     },
     "eventsource-parser@3.0.6": {
@@ -142,23 +136,16 @@
     "json-schema@0.4.0": {
       "integrity": "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA=="
     },
-    "zod@3.25.76": {
-      "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="
-    },
-    "zod@4.1.12": {
-      "integrity": "sha512-JInaHOamG8pt5+Ey8kGmdcAcg3OL9reK8ltczgHTAwNhMys/6ThXHityHxVV2p3fkw/c+MAvBHFVYHFZDmjMCQ=="
+    "zod@4.1.13": {
+      "integrity": "sha512-AvvthqfqrAhNH9dnfmrfKzX5upOdjUVJYFqNSlkmGf64gRaTzlPwz99IHYnVs28qYAybvAlBV+H7pn0saFY4Ig=="
     }
-  },
-  "remote": {
-    "https://deno.land/std@0.208.0/assert/assert.ts": "9a97dad6d98c238938e7540736b826440ad8c1c1e54430ca4c4e623e585607ee",
-    "https://deno.land/std@0.208.0/assert/assertion_error.ts": "4d0bde9b374dfbcbe8ac23f54f567b77024fb67dbb1906a852d67fe050d42f56",
-    "https://deno.land/std@0.208.0/cli/parse_args.ts": "9bea02050b3f302e706871ff87ecfa3ad82cc34249adbe0dcddfaac75bdb48ff"
   },
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@1.0.15",
-      "npm:@openrouter/ai-sdk-provider@^1.2.3",
-      "npm:ai@^5.0.93"
+      "npm:@openrouter/ai-sdk-provider@^1.2.8",
+      "npm:ai@^5.0.93",
+      "npm:zod@^4.1.12"
     ]
   }
 }

@@ -376,7 +376,7 @@ Deno.test("Mule - logs include correct projectId", async () => {
     inputSchema: z.string(),
     outputSchema: z.string(),
     executor: async ({ input, ai }) => {
-      return await ai.generate({ prompt: input });
+      return await ai.generateText({ prompt: input });
     }
   });
 

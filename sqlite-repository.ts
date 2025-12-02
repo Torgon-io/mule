@@ -78,6 +78,12 @@ export class SQLiteRepository implements StepExecutionRepository {
         run_id TEXT NOT NULL,
         step_id TEXT NOT NULL,
 
+        -- Hierarchical execution metadata
+        parent_step_id TEXT,
+        execution_group TEXT,
+        execution_type TEXT,
+        depth INTEGER,
+
         -- Timing
         timestamp TEXT NOT NULL,
         duration_ms INTEGER,
@@ -108,8 +114,16 @@ export class SQLiteRepository implements StepExecutionRepository {
       CREATE INDEX IF NOT EXISTS idx_timestamp ON step_executions(timestamp DESC);
     `);
 
-    // Migrate existing databases by adding cost columns if they don't exist
+    // Migrate existing databases first
     this.migrateAddCostColumns();
+    this.migrateAddHierarchicalColumns();
+
+    // Create index on execution_group after migration ensures column exists
+    try {
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_execution_group ON step_executions(execution_group);`);
+    } catch {
+      // Index creation failed, likely column doesn't exist yet
+    }
   }
 
   /**
@@ -128,38 +142,67 @@ export class SQLiteRepository implements StepExecutionRepository {
   }
 
   /**
+   * Add hierarchical execution columns to existing databases
+   */
+  private migrateAddHierarchicalColumns(): void {
+    try {
+      this.db.exec(`
+        ALTER TABLE step_executions ADD COLUMN parent_step_id TEXT;
+        ALTER TABLE step_executions ADD COLUMN execution_group TEXT;
+        ALTER TABLE step_executions ADD COLUMN execution_type TEXT;
+        ALTER TABLE step_executions ADD COLUMN depth INTEGER;
+      `);
+    } catch {
+      // Columns already exist, ignore error
+    }
+  }
+
+  /**
    * Save a step execution to the database
    */
   async save(execution: StepExecution): Promise<void> {
-    this.db.prepare(
-      `INSERT INTO step_executions (
-        project_id, workflow_id, run_id, step_id,
-        timestamp, duration_ms,
-        model, prompt, result,
-        prompt_tokens, completion_tokens, total_tokens, finish_reason,
-        prompt_cost_usd, completion_cost_usd, total_cost_usd,
-        status, error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      execution.projectId,
-      execution.workflowId,
-      execution.runId,
-      execution.stepId,
-      execution.timestamp,
-      execution.durationMs ?? null,
-      execution.model ?? null,
-      execution.prompt ?? null,
-      execution.result ?? null,
-      execution.promptTokens ?? null,
-      execution.completionTokens ?? null,
-      execution.totalTokens ?? null,
-      execution.finishReason ?? null,
-      execution.promptCostUsd ?? null,
-      execution.completionCostUsd ?? null,
-      execution.totalCostUsd ?? null,
-      execution.status,
-      execution.error ?? null
-    );
+    try {
+      this.db.prepare(
+        `INSERT INTO step_executions (
+          project_id, workflow_id, run_id, step_id,
+          parent_step_id, execution_group, execution_type, depth,
+          timestamp, duration_ms,
+          model, prompt, result,
+          prompt_tokens, completion_tokens, total_tokens, finish_reason,
+          prompt_cost_usd, completion_cost_usd, total_cost_usd,
+          status, error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        execution.projectId,
+        execution.workflowId,
+        execution.runId,
+        execution.stepId,
+        execution.parentStepId ?? null,
+        execution.executionGroup ?? null,
+        execution.executionType ?? null,
+        execution.depth ?? null,
+        execution.timestamp,
+        execution.durationMs ?? null,
+        execution.model ?? null,
+        execution.prompt ?? null,
+        execution.result ?? null,
+        execution.promptTokens ?? null,
+        execution.completionTokens ?? null,
+        execution.totalTokens ?? null,
+        execution.finishReason ?? null,
+        execution.promptCostUsd ?? null,
+        execution.completionCostUsd ?? null,
+        execution.totalCostUsd ?? null,
+        execution.status,
+        execution.error ?? null
+      );
+    } catch (error) {
+      // Log warning but don't throw - persistence failures shouldn't block workflow execution
+      console.warn(
+        `[Mule] Failed to persist step execution for ${execution.stepId}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   /**
@@ -170,20 +213,29 @@ export class SQLiteRepository implements StepExecutionRepository {
     workflowId: string,
     runId: string
   ): Promise<StepExecution[]> {
-    const rows = this.db.prepare(
-      `SELECT
-        project_id, workflow_id, run_id, step_id,
-        timestamp, duration_ms,
-        model, prompt, result,
-        prompt_tokens, completion_tokens, total_tokens, finish_reason,
-        prompt_cost_usd, completion_cost_usd, total_cost_usd,
-        status, error
-      FROM step_executions
-      WHERE project_id = ? AND workflow_id = ? AND run_id = ?
-      ORDER BY timestamp ASC`
-    ).all(projectId, workflowId, runId) as unknown[];
+    try {
+      const rows = this.db.prepare(
+        `SELECT
+          project_id, workflow_id, run_id, step_id,
+          parent_step_id, execution_group, execution_type, depth,
+          timestamp, duration_ms,
+          model, prompt, result,
+          prompt_tokens, completion_tokens, total_tokens, finish_reason,
+          prompt_cost_usd, completion_cost_usd, total_cost_usd,
+          status, error
+        FROM step_executions
+        WHERE project_id = ? AND workflow_id = ? AND run_id = ?
+        ORDER BY timestamp ASC`
+      ).all(projectId, workflowId, runId) as unknown[];
 
-    return rows.map((row: unknown) => this.rowObjectToStepExecution(row as Record<string, unknown>));
+      return rows.map((row: unknown) => this.rowObjectToStepExecution(row as Record<string, unknown>));
+    } catch (error) {
+      console.warn(
+        `[Mule] Failed to query workflow run (${projectId}/${workflowId}/${runId}):`,
+        error instanceof Error ? error.message : String(error)
+      );
+      return [];
+    }
   }
 
   /**
@@ -193,21 +245,30 @@ export class SQLiteRepository implements StepExecutionRepository {
     projectId: string,
     limit: number = 100
   ): Promise<StepExecution[]> {
-    const rows = this.db.prepare(
-      `SELECT
-        project_id, workflow_id, run_id, step_id,
-        timestamp, duration_ms,
-        model, prompt, result,
-        prompt_tokens, completion_tokens, total_tokens, finish_reason,
-        prompt_cost_usd, completion_cost_usd, total_cost_usd,
-        status, error
-      FROM step_executions
-      WHERE project_id = ?
-      ORDER BY timestamp DESC
-      LIMIT ?`
-    ).all(projectId, limit) as unknown[];
+    try {
+      const rows = this.db.prepare(
+        `SELECT
+          project_id, workflow_id, run_id, step_id,
+          parent_step_id, execution_group, execution_type, depth,
+          timestamp, duration_ms,
+          model, prompt, result,
+          prompt_tokens, completion_tokens, total_tokens, finish_reason,
+          prompt_cost_usd, completion_cost_usd, total_cost_usd,
+          status, error
+        FROM step_executions
+        WHERE project_id = ?
+        ORDER BY timestamp DESC
+        LIMIT ?`
+      ).all(projectId, limit) as unknown[];
 
-    return rows.map((row: unknown) => this.rowObjectToStepExecution(row as Record<string, unknown>));
+      return rows.map((row: unknown) => this.rowObjectToStepExecution(row as Record<string, unknown>));
+    } catch (error) {
+      console.warn(
+        `[Mule] Failed to query project history (${projectId}):`,
+        error instanceof Error ? error.message : String(error)
+      );
+      return [];
+    }
   }
 
   /**
@@ -226,6 +287,10 @@ export class SQLiteRepository implements StepExecutionRepository {
       workflowId: row.workflow_id as string,
       runId: row.run_id as string,
       stepId: row.step_id as string,
+      parentStepId: (row.parent_step_id as string | null) ?? undefined,
+      executionGroup: (row.execution_group as string | null) ?? undefined,
+      executionType: (row.execution_type as "sequential" | "parallel" | "branch" | null) ?? undefined,
+      depth: (row.depth as number | null) ?? undefined,
       timestamp: row.timestamp as string,
       durationMs: (row.duration_ms as number | null) ?? undefined,
       model: (row.model as string | null) ?? undefined,

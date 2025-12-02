@@ -13,8 +13,9 @@
     "studio": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-net --unstable-ffi scripts/studio-server.ts"
   },
   "imports": {
-    "@openrouter/ai-sdk-provider": "npm:@openrouter/ai-sdk-provider@^1.2.3",
+    "@openrouter/ai-sdk-provider": "npm:@openrouter/ai-sdk-provider@^1.2.8",
     "@std/assert": "jsr:@std/assert@1.0.15",
-    "ai": "npm:ai@^5.0.93"
+    "ai": "npm:ai@^5.0.93",
+    "zod": "npm:zod@^4.1.12"
   }
 }

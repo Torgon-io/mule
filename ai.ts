@@ -3,24 +3,25 @@
  * Handles LLM calls via OpenRouter with logging and usage tracking
  */
 
-import { createOpenRouter } from "npm:@openrouter/ai-sdk-provider";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import {
   generateText,
   generateObject,
   NoObjectGeneratedError,
-} from "npm:ai@^5.0.93";
+  type ModelMessage,
+} from "ai";
 import type { Logger, LLMCallLog } from "./types.ts";
 import { pricingService } from "./pricing.ts";
 
 type GenerateRequest = {
   model: string;
-  messages: Array<{ role: "user" | "system" | "assistant"; content: string }>;
+  messages: ModelMessage[];
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
 };
 
-type generateObject = GenerateRequest & {
+type GenerateObjectRequest = GenerateRequest & {
   schema: any; // Zod schema for structured output
 };
 
@@ -30,6 +31,12 @@ export interface AIServiceConfig {
   runId: string;
   stepId: string;
   logger: Logger | null;
+
+  // Hierarchical execution metadata
+  parentStepId?: string;
+  executionGroup?: string;
+  executionType?: "sequential" | "parallel" | "branch";
+  depth?: number;
 }
 
 export class AIService {
@@ -72,8 +79,10 @@ export class AIService {
       // Alternative format: response.usage.{inputTokens, outputTokens}
       // OpenRouter provider format: response.providerMetadata.openrouter.usage.{promptTokens, completionTokens}
 
-      let promptTokens = response.usage?.promptTokens ?? response.usage?.inputTokens;
-      let completionTokens = response.usage?.completionTokens ?? response.usage?.outputTokens;
+      let promptTokens =
+        response.usage?.promptTokens ?? response.usage?.inputTokens;
+      let completionTokens =
+        response.usage?.completionTokens ?? response.usage?.outputTokens;
       let totalTokens = response.usage?.totalTokens;
 
       // Check OpenRouter provider metadata as fallback
@@ -97,6 +106,13 @@ export class AIService {
         runId: this.config.runId,
         stepId: this.config.stepId,
         timestamp: new Date().toISOString(),
+
+        // Hierarchical execution metadata
+        parentStepId: this.config.parentStepId,
+        executionGroup: this.config.executionGroup,
+        executionType: this.config.executionType,
+        depth: this.config.depth,
+
         model: request.model,
         messages: request.messages,
         usage: normalizedUsage,
@@ -125,8 +141,8 @@ export class AIService {
         // Some models don't provide prompt/completion breakdown
         console.warn(
           `Model ${request.model} doesn't provide prompt/completion token breakdown. ` +
-          `Cost tracking requires separate prompt and completion token counts. ` +
-          `Total tokens: ${totalTokens}`
+            `Cost tracking requires separate prompt and completion token counts. ` +
+            `Total tokens: ${totalTokens}`
         );
       }
 
@@ -134,7 +150,7 @@ export class AIService {
     }
   }
 
-  async generate<T>(request: GenerateRequest) {
+  async generateText(request: GenerateRequest) {
     const openrouter = this.getOpenRouter();
     const startTime = Date.now();
     const response = await generateText({
@@ -142,11 +158,11 @@ export class AIService {
       model: openrouter(request.model),
     });
     const duration = Date.now() - startTime;
-    this.storeRequestMetadata(request, response, duration, "not implemented");
-    return response.content;
+    this.storeRequestMetadata(request, response, duration, response.text);
+    return response.text;
   }
 
-  async generateObject<T>(request: generateObject) {
+  async generateObject<T>(request: GenerateObjectRequest) {
     if (!request.schema) {
       throw new Error("Schema required for structured output");
     }

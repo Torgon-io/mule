@@ -19,7 +19,7 @@ When using Mule workflows in production applications, teams need to:
 
 ## What Gets Logged
 
-Each LLM call (via `ai.generate()` or `ai.generateObject()`) logs:
+Each LLM call (via `ai.generateText()` or `ai.generateObject()`) logs:
 
 ### Required Metadata
 - `projectId` - Identifier for the project using Mule
