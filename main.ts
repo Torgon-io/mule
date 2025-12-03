@@ -83,7 +83,11 @@ interface ExecutionContext {
   depth: number;
 }
 
-class Workflow<TCurrentOutput = undefined, TState = Record<string, unknown>> {
+class Workflow<
+  TCurrentOutput = undefined,
+  TState = Record<string, unknown>,
+  TInitialInput = TCurrentOutput  // ← CORRECTED: Default to TCurrentOutput
+> {
   id: string = "";
   state: TState;
   lastOutput: any = null;
@@ -130,24 +134,25 @@ class Workflow<TCurrentOutput = undefined, TState = Record<string, unknown>> {
    * the parent's state type (they use `any` for state to allow flexible composition).
    */
   addStep<TOutput, TStepState extends Record<string, unknown> = Record<string, never>>(
-    step: Step<TCurrentOutput, TOutput, TStepState> | Workflow<TOutput, any>
-  ): Workflow<TOutput, TState & TStepState> {
+    step: Step<TCurrentOutput, TOutput, TStepState> | Workflow<TOutput, any, any>
+  ): Workflow<TOutput, TState & TStepState, TInitialInput> {
+    //                                       ^^^^^^^^^^^^^ CORRECTED: Keep TInitialInput unchanged
     this.steps.push(async () => {
       this.lastOutput = await this.runStepExecution(step as any, this.lastOutput, {
         ...this.executionContext,
         executionType: "sequential",
       });
     });
-    return this as any as Workflow<TOutput, TState & TStepState>;
+    return this as any as Workflow<TOutput, TState & TStepState, TInitialInput>;
   }
 
   async run(
     paramsOrRunId?: string | {
       runId?: string;
-      initialInput?: TCurrentOutput;
+      initialInput?: TInitialInput;  // ← CORRECTED: Uses TInitialInput (stays constant)
       initialState?: Record<string, unknown>;
     },
-    initialInput?: TCurrentOutput,
+    initialInput?: TInitialInput,  // ← CORRECTED: Uses TInitialInput
     initialState?: Record<string, unknown>
   ): Promise<TCurrentOutput> {
     // Handle both old signature (positional params) and new signature (named params)
@@ -189,7 +194,7 @@ class Workflow<TCurrentOutput = undefined, TState = Record<string, unknown>> {
 
   parallel<TSteps extends readonly Step<TCurrentOutput, any, TState, any>[]>(
     steps: [...TSteps]
-  ): Workflow<any, TState> {
+  ): Workflow<any, TState, TInitialInput> {  // ← CORRECTED: Preserve TInitialInput
     this.steps.push(async () => {
       // Generate a unique execution group for this parallel batch
       const executionGroup = crypto.randomUUID();
@@ -210,7 +215,7 @@ class Workflow<TCurrentOutput = undefined, TState = Record<string, unknown>> {
         })
       );
     });
-    return this as any;
+    return this as any as Workflow<any, TState, TInitialInput>;
   }
 
   branch(
@@ -218,7 +223,7 @@ class Workflow<TCurrentOutput = undefined, TState = Record<string, unknown>> {
       step: Step<TCurrentOutput, any, TState>,
       condition: (output: TCurrentOutput) => boolean
     ][]
-  ): Workflow<any, TState> {
+  ): Workflow<any, TState, TInitialInput> {  // ← CORRECTED: Preserve TInitialInput
     this.steps.push(async () => {
       const stepsToRun = conditionalSteps
         .filter(([_, condition]) => condition(this.lastOutput))
@@ -245,11 +250,11 @@ class Workflow<TCurrentOutput = undefined, TState = Record<string, unknown>> {
         stepsToRun.map((s, i) => [s.id, results[i]])
       );
     });
-    return this;
+    return this as any as Workflow<any, TState, TInitialInput>;
   }
 
   private async runStepExecution(
-    step: Step<any, any, any> | Workflow<any, any>,
+    step: Step<any, any, any> | Workflow<any, any, any>,
     input: any,
     context: ExecutionContext
   ) {
@@ -396,9 +401,17 @@ class Mule {
     state?: TState;
     inputSchema?: TInputSchema;
     id?: string;
-  }): Workflow<z.infer<TInputSchema>, TState> {
+  }): Workflow<
+    z.infer<TInputSchema>,  // TCurrentOutput
+    TState,                 // TState
+    z.infer<TInputSchema>   // TInitialInput ← CORRECTED: Explicitly set
+  > {
     const workflowId = params?.id || crypto.randomUUID();
-    const workflow = new Workflow<z.infer<TInputSchema>, TState>(
+    const workflow = new Workflow<
+      z.infer<TInputSchema>,
+      TState,
+      z.infer<TInputSchema>  // ← CORRECTED: Pass TInitialInput
+    >(
       workflowId,
       params?.state || ({} as TState),
       params?.inputSchema || (z.undefined() as any)
@@ -419,7 +432,11 @@ function createWorkflow<
   state?: TState;
   inputSchema?: TInputSchema;
   id?: string;
-}): Workflow<z.infer<TInputSchema>, TState> {
+}): Workflow<
+  z.infer<TInputSchema>,
+  TState,
+  z.infer<TInputSchema>  // ← CORRECTED: Explicitly set TInitialInput
+> {
   console.warn(
     "[Mule] Using createWorkflow() without Mule instance is deprecated. " +
       "Use: const mule = new Mule('projectId'); const workflow = mule.createWorkflow();"
