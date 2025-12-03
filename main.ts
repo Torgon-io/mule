@@ -192,7 +192,7 @@ class Workflow<
     return this.state;
   }
 
-  parallel<TSteps extends readonly Step<TCurrentOutput, any, TState, any>[]>(
+  parallel<TSteps extends readonly Step<TCurrentOutput, any, any, any>[]>(
     steps: [...TSteps]
   ): Workflow<any, TState, TInitialInput> {  // ← CORRECTED: Preserve TInitialInput
     this.steps.push(async () => {
@@ -220,7 +220,7 @@ class Workflow<
 
   branch(
     conditionalSteps: [
-      step: Step<TCurrentOutput, any, TState>,
+      step: Step<TCurrentOutput, any, any>,
       condition: (output: TCurrentOutput) => boolean
     ][]
   ): Workflow<any, TState, TInitialInput> {  // ← CORRECTED: Preserve TInitialInput
