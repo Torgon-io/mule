@@ -104,7 +104,7 @@ class Workflow<
   constructor(
     workflowId: string,
     state: TState,
-    inputSchema: z.ZodTypeAny = z.undefined()
+    inputSchema: z.ZodTypeAny = z.any()
   ) {
     this.workflowId = workflowId;
     this.state = state;
@@ -395,7 +395,7 @@ class Mule {
   }
 
   createWorkflow<
-    TInputSchema extends z.ZodTypeAny = z.ZodUndefined,
+    TInputSchema extends z.ZodTypeAny = z.ZodAny,
     TState = Record<string, unknown>
   >(params?: {
     state?: TState;
@@ -414,7 +414,7 @@ class Mule {
     >(
       workflowId,
       params?.state || ({} as TState),
-      params?.inputSchema || (z.undefined() as any)
+      params?.inputSchema || (z.any() as any)
     );
 
     // Inject configuration
@@ -426,7 +426,7 @@ class Mule {
 }
 
 function createWorkflow<
-  TInputSchema extends z.ZodTypeAny = z.ZodUndefined,
+  TInputSchema extends z.ZodTypeAny = z.ZodAny,
   TState = Record<string, unknown>
 >(params?: {
   state?: TState;
