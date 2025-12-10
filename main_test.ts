@@ -355,7 +355,7 @@ Deno.test("Workflow - inputSchema with initial state and typed input", async () 
   });
 
   const workflow = createWorkflow({
-    state: { extraData: "test" },
+    state: { extraData: "test", userId: "" },
     inputSchema: inputSchema
   });
   workflow.lastOutput = { userId: "user123", initialValue: 5 };
@@ -426,7 +426,7 @@ Deno.test("onError - error handler receives correct input and state", async () =
     id: "step1",
     inputSchema: z.undefined(),
     outputSchema: z.string(),
-    executor: async ({ state }) => {
+    executor: async ({ state }: { state: Record<string, unknown> }) => {
       state.testValue = 42;
       return "test input";
     },
@@ -641,7 +641,7 @@ Deno.test("onError - error handler can access and modify state", async () => {
     id: "failingStep",
     inputSchema: z.undefined(),
     outputSchema: z.string(),
-    executor: async ({ state }) => {
+    executor: async ({ state }: { state: Record<string, unknown> }) => {
       state.attemptCount = 1;
       throw new Error("Test error");
     },
@@ -651,7 +651,7 @@ Deno.test("onError - error handler can access and modify state", async () => {
     },
   });
 
-  const workflow = createWorkflow();
+  const workflow = createWorkflow<z.ZodAny, Record<string, unknown>>();
   await workflow.addStep(failingStep).run();
 
   assertEquals(workflow.getState().attemptCount, 2);
@@ -742,11 +742,17 @@ Deno.test("Workflow as Step - nested workflow returns output to parent", async (
 });
 
 Deno.test("Workflow as Step - state is shared between parent and nested workflow", async () => {
+  type SharedState = {
+    innerValue?: string;
+    outerValue?: string;
+    sharedCounter?: number;
+  };
+
   const innerStep = createStep({
     id: "innerStep",
     inputSchema: z.string(),
     outputSchema: z.string(),
-    executor: async ({ input, state }) => {
+    executor: async ({ input, state }: { input: string; state: SharedState }) => {
       state.innerValue = "set by inner";
       state.sharedCounter = (state.sharedCounter || 0) + 1;
       return input.toUpperCase();
@@ -760,7 +766,7 @@ Deno.test("Workflow as Step - state is shared between parent and nested workflow
     id: "outerStep1",
     inputSchema: z.undefined(),
     outputSchema: z.string(),
-    executor: async ({ state }) => {
+    executor: async ({ state }: { state: SharedState }) => {
       state.outerValue = "set by outer";
       state.sharedCounter = 5;
       return "test";

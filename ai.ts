@@ -150,7 +150,7 @@ export class AIService {
     }
   }
 
-  async generateText(request: GenerateRequest) {
+  async generateText(request: GenerateRequest): Promise<string> {
     const openrouter = this.getOpenRouter();
     const startTime = Date.now();
     const response = await generateText({
@@ -162,7 +162,7 @@ export class AIService {
     return response.text;
   }
 
-  async generateObject<T>(request: GenerateObjectRequest) {
+  async generateObject<T>(request: GenerateObjectRequest): Promise<T> {
     if (!request.schema) {
       throw new Error("Schema required for structured output");
     }
