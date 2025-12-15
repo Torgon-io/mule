@@ -1,6 +1,7 @@
 import { SQLiteRepository } from "../sqlite-repository.ts";
 
-const repo = new SQLiteRepository();
+const dbPath = Deno.env.get("MULE_DB_PATH") || "~/.mule/executions.db";
+const repo = new SQLiteRepository(dbPath);
 const PORT = Deno.env.get("PORT") ? Number(Deno.env.get("PORT")) : 3030;
 
 // Helper to parse JSON safely
@@ -80,7 +81,10 @@ async function handleRunDetails(
 // Read HTML file
 async function serveHTML(): Promise<Response> {
   try {
-    const html = await Deno.readTextFile("./scripts/studio.html");
+    // Get the directory where this script is located
+    const scriptDir = new URL(".", import.meta.url).pathname;
+    const htmlPath = `${scriptDir}studio.html`;
+    const html = await Deno.readTextFile(htmlPath);
     return new Response(html, {
       headers: { "Content-Type": "text/html" },
     });
@@ -159,7 +163,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
 // Start server
 console.log(`🚀 Mule Workflow Studio running at http://localhost:${PORT}`);
-console.log(`📊 Database: ~/.mule/executions.db`);
+console.log(`📊 Database: ${dbPath}`);
 console.log(`\n✨ Open http://localhost:${PORT} in your browser\n`);
 
 Deno.serve({ port: PORT }, handleRequest);
