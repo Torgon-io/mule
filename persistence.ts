@@ -60,8 +60,9 @@ export type PersistenceConfig =
 export interface StepExecutionRepository {
   /**
    * Save a step execution
+   * Returns the ID of the inserted row, or undefined if the insert failed
    */
-  save(execution: StepExecution): Promise<void>;
+  save(execution: StepExecution): Promise<number | undefined>;
 
   /**
    * Get all steps from a specific workflow run
@@ -81,6 +82,33 @@ export interface StepExecutionRepository {
   ): Promise<StepExecution[]>;
 
   /**
+   * Get cached LLM response by project ID and request hash
+   */
+  getCachedResponse(
+    projectId: string,
+    requestHash: string
+  ): Promise<StepExecution | null>;
+
+  /**
+   * Store LLM response in cache
+   */
+  setCachedResponse(
+    projectId: string,
+    requestHash: string,
+    stepExecutionId: number
+  ): Promise<void>;
+
+  /**
+   * Clear cache for a specific project
+   */
+  clearCacheByProjectId(projectId: string): Promise<void>;
+
+  /**
+   * Clear all cache entries
+   */
+  clearAllCache(): Promise<void>;
+
+  /**
    * Close the repository connection
    */
   close(): void;
@@ -92,9 +120,9 @@ export interface StepExecutionRepository {
 export class RepositoryLogger implements Logger {
   constructor(private repository: StepExecutionRepository) {}
 
-  async log(data: LLMCallLog): Promise<void> {
+  async log(data: LLMCallLog): Promise<number | undefined> {
     const execution = this.mapToStepExecution(data);
-    await this.repository.save(execution);
+    return await this.repository.save(execution);
   }
 
   /**

@@ -11,10 +11,11 @@ import {
   type ModelMessage,
 } from "ai";
 import type { Logger, LLMCallLog } from "./types.ts";
+import type { StepExecutionRepository } from "./persistence.ts";
 import { pricingService } from "./pricing.ts";
 
 type GenerateRequest = {
-  model: string;
+  model?: string;
   messages: ModelMessage[];
   systemPrompt?: string;
   temperature?: number;
@@ -31,6 +32,8 @@ export interface AIServiceConfig {
   runId: string;
   stepId: string;
   logger: Logger | null;
+  defaultModel?: string;
+  cacheRepository?: StepExecutionRepository | null;
 
   // Hierarchical execution metadata
   parentStepId?: string;
@@ -66,12 +69,28 @@ export class AIService {
     return this.openrouter;
   }
 
+  private async generateCacheKey(request: GenerateRequest, model: string): Promise<string> {
+    const cacheInput = {
+      model,
+      messages: request.messages,
+      systemPrompt: request.systemPrompt || null,
+      temperature: request.temperature || null,
+      maxTokens: request.maxTokens || null,
+    };
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify(cacheInput));
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
   private async storeRequestMetadata(
     request: GenerateRequest,
     response: any,
     duration: number,
-    result: unknown
-  ) {
+    result: unknown,
+    cacheKey?: string
+  ): Promise<number | undefined> {
     // If logger is configured, use it
     if (this.config.logger) {
       // Extract token counts - AI SDK v5 can return them with different field names
@@ -125,7 +144,8 @@ export class AIService {
       // If pricing is not available, cost will be undefined
       if (promptTokens || completionTokens) {
         try {
-          const cost = await pricingService.getCost(request.model, {
+          // request.model is guaranteed to be defined here because we pass it from the generate methods
+          const cost = await pricingService.getCost(request.model!, {
             promptTokens: promptTokens ?? 0,
             completionTokens: completionTokens ?? 0,
           });
@@ -146,19 +166,54 @@ export class AIService {
         );
       }
 
-      await this.config.logger.log(logData);
+      const executionId = await this.config.logger.log(logData);
+
+      // Cache the response if cache is enabled and we have a cache key
+      if (cacheKey && this.config.cacheRepository && executionId !== undefined) {
+        await this.config.cacheRepository.setCachedResponse(
+          this.config.projectId,
+          cacheKey,
+          executionId
+        );
+      }
+
+      return executionId;
     }
+    return undefined;
   }
 
   async generateText(request: GenerateRequest) {
+    const model = request.model ?? this.config.defaultModel;
+    if (!model) {
+      throw new Error(
+        "No model specified. Either provide a model in the request or set a defaultModel in MuleOptions."
+      );
+    }
+
+    // Generate cache key if caching is enabled
+    let cacheKey: string | undefined;
+    if (this.config.cacheRepository) {
+      cacheKey = await this.generateCacheKey(request, model);
+      const cachedExecution = await this.config.cacheRepository.getCachedResponse(
+        this.config.projectId,
+        cacheKey
+      );
+
+      if (cachedExecution?.result) {
+        console.log(`[Mule] 💾 Cache hit for step ${this.config.stepId} (model: ${model})`);
+        return cachedExecution.result;
+      }
+    }
+
     const openrouter = this.getOpenRouter();
     const startTime = Date.now();
     const response = await generateText({
       ...request,
-      model: openrouter(request.model),
+      model: openrouter(model),
     });
     const duration = Date.now() - startTime;
-    this.storeRequestMetadata(request, response, duration, response.text);
+    console.log(`[Mule] 🤖 LLM call completed for step ${this.config.stepId} (model: ${model}, duration: ${duration}ms)`);
+    await this.storeRequestMetadata({ ...request, model }, response, duration, response.text, cacheKey);
     return response.text;
   }
 
@@ -167,15 +222,38 @@ export class AIService {
       throw new Error("Schema required for structured output");
     }
 
+    const model = request.model ?? this.config.defaultModel;
+    if (!model) {
+      throw new Error(
+        "No model specified. Either provide a model in the request or set a defaultModel in MuleOptions."
+      );
+    }
+
+    // Generate cache key if caching is enabled
+    let cacheKey: string | undefined;
+    if (this.config.cacheRepository) {
+      cacheKey = await this.generateCacheKey(request, model);
+      const cachedExecution = await this.config.cacheRepository.getCachedResponse(
+        this.config.projectId,
+        cacheKey
+      );
+
+      if (cachedExecution?.result) {
+        console.log(`[Mule] 💾 Cache hit for step ${this.config.stepId} (model: ${model})`);
+        return JSON.parse(cachedExecution.result) as T;
+      }
+    }
+
     const openrouter = this.getOpenRouter();
     try {
       const startTime = Date.now();
       const reponse = await generateObject({
         ...request,
-        model: openrouter(request.model),
+        model: openrouter(model),
       });
       const duration = Date.now() - startTime;
-      this.storeRequestMetadata(request, reponse, duration, reponse.object);
+      console.log(`[Mule] 🤖 LLM call completed for step ${this.config.stepId} (model: ${model}, duration: ${duration}ms)`);
+      await this.storeRequestMetadata({ ...request, model }, reponse, duration, reponse.object, cacheKey);
 
       return reponse.object as T;
     } catch (error) {

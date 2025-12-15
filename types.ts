@@ -15,7 +15,7 @@ export type { ModelMessage };
  * Logger interface for custom logging implementations
  */
 export interface Logger {
-  log(data: LLMCallLog): Promise<void>;
+  log(data: LLMCallLog): Promise<number | undefined>;
 }
 
 /**
@@ -61,5 +61,9 @@ export interface MuleOptions {
   logging?: {
     enabled?: boolean;
     logger?: Logger;
+  };
+  defaultModel?: string;
+  cache?: {
+    enabled?: boolean;
   };
 }
