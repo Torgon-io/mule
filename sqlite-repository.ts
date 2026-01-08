@@ -24,6 +24,9 @@ export class SQLiteRepository implements StepExecutionRepository {
     // Open SQLite connection
     this.db = new Database(expandedPath);
 
+    // Enable WAL mode for better concurrency
+    this.db.exec("PRAGMA journal_mode=WAL;");
+
     // Create table and indexes if they don't exist
     this.initializeDatabase();
   }
@@ -124,6 +127,22 @@ export class SQLiteRepository implements StepExecutionRepository {
     } catch {
       // Index creation failed, likely column doesn't exist yet
     }
+
+    // Create cache table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS llm_response_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        step_execution_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(project_id, request_hash),
+        FOREIGN KEY (step_execution_id) REFERENCES step_executions(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cache_lookup ON llm_response_cache(project_id, request_hash);
+      CREATE INDEX IF NOT EXISTS idx_cache_project ON llm_response_cache(project_id);
+    `);
   }
 
   /**
@@ -159,8 +178,9 @@ export class SQLiteRepository implements StepExecutionRepository {
 
   /**
    * Save a step execution to the database
+   * Returns the ID of the inserted row, or undefined if the insert failed
    */
-  async save(execution: StepExecution): Promise<void> {
+  async save(execution: StepExecution): Promise<number | undefined> {
     try {
       this.db.prepare(
         `INSERT INTO step_executions (
@@ -196,12 +216,14 @@ export class SQLiteRepository implements StepExecutionRepository {
         execution.status,
         execution.error ?? null
       );
+      return this.db.lastInsertRowId;
     } catch (error) {
       // Log warning but don't throw - persistence failures shouldn't block workflow execution
       console.warn(
         `[Mule] Failed to persist step execution for ${execution.stepId}:`,
         error instanceof Error ? error.message : String(error)
       );
+      return undefined;
     }
   }
 
@@ -268,6 +290,100 @@ export class SQLiteRepository implements StepExecutionRepository {
         error instanceof Error ? error.message : String(error)
       );
       return [];
+    }
+  }
+
+  /**
+   * Get cached LLM response by project ID and request hash
+   */
+  async getCachedResponse(
+    projectId: string,
+    requestHash: string
+  ): Promise<StepExecution | null> {
+    try {
+      const cacheRow = this.db.prepare(
+        `SELECT step_execution_id FROM llm_response_cache
+         WHERE project_id = ? AND request_hash = ?`
+      ).get(projectId, requestHash) as { step_execution_id: number } | undefined;
+
+      if (!cacheRow) {
+        return null;
+      }
+
+      // Fetch the actual execution data
+      const executionRow = this.db.prepare(
+        `SELECT
+          project_id, workflow_id, run_id, step_id,
+          parent_step_id, execution_group, execution_type, depth,
+          timestamp, duration_ms,
+          model, prompt, result,
+          prompt_tokens, completion_tokens, total_tokens, finish_reason,
+          prompt_cost_usd, completion_cost_usd, total_cost_usd,
+          status, error
+        FROM step_executions
+        WHERE id = ?`
+      ).get(cacheRow.step_execution_id) as Record<string, unknown> | undefined;
+
+      if (!executionRow) {
+        return null;
+      }
+
+      return this.rowObjectToStepExecution(executionRow);
+    } catch (error) {
+      console.warn(
+        `[Mule] Failed to get cached response for ${projectId}/${requestHash}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Store LLM response in cache
+   */
+  async setCachedResponse(
+    projectId: string,
+    requestHash: string,
+    stepExecutionId: number
+  ): Promise<void> {
+    try {
+      this.db.prepare(
+        `INSERT OR IGNORE INTO llm_response_cache (project_id, request_hash, step_execution_id, created_at)
+         VALUES (?, ?, ?, ?)`
+      ).run(projectId, requestHash, stepExecutionId, new Date().toISOString());
+    } catch (error) {
+      console.warn(
+        `[Mule] Failed to cache response for ${projectId}/${requestHash}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
+  /**
+   * Clear cache for a specific project
+   */
+  async clearCacheByProjectId(projectId: string): Promise<void> {
+    try {
+      this.db.prepare(`DELETE FROM llm_response_cache WHERE project_id = ?`).run(projectId);
+    } catch (error) {
+      console.warn(
+        `[Mule] Failed to clear cache for project ${projectId}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
+  /**
+   * Clear all cache entries
+   */
+  async clearAllCache(): Promise<void> {
+    try {
+      this.db.prepare(`DELETE FROM llm_response_cache`).run();
+    } catch (error) {
+      console.warn(
+        `[Mule] Failed to clear all cache:`,
+        error instanceof Error ? error.message : String(error)
+      );
     }
   }
 

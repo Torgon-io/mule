@@ -20,8 +20,9 @@ export type { StepExecution } from "./persistence.ts";
  * Console logger implementation
  */
 export class ConsoleLogger implements Logger {
-  async log(data: LLMCallLog): Promise<void> {
+  async log(data: LLMCallLog): Promise<number | undefined> {
     console.log("[Mule LLM Call]", JSON.stringify(data, null, 2));
+    return undefined;
   }
 }
 
@@ -97,6 +98,8 @@ class Workflow<
   readonly workflowId: string;
   projectId: string = "unknown";
   logger: Logger | null = null;
+  defaultModel?: string;
+  cacheRepository: StepExecutionRepository | null = null;
 
   // Execution context for hierarchical tracking
   private executionContext: ExecutionContext = { depth: 0 };
@@ -269,6 +272,8 @@ class Workflow<
         // Nested workflow inherits parent config and execution context
         step.projectId = this.projectId;
         step.logger = this.logger;
+        step.defaultModel = this.defaultModel;
+        step.cacheRepository = this.cacheRepository;
         step.executionContext = {
           ...context,
           parentStepId: step.workflowId,
@@ -297,6 +302,8 @@ class Workflow<
           runId: this.runId,
           stepId: step.id,
           logger: this.logger,
+          defaultModel: this.defaultModel,
+          cacheRepository: this.cacheRepository,
 
           // Pass execution context to AIService
           parentStepId: context.parentStepId,
@@ -359,9 +366,13 @@ class Mule {
   private logger: Logger;
   private loggingEnabled: boolean;
   private repository: StepExecutionRepository | null;
+  private defaultModel?: string;
+  private cacheEnabled: boolean;
 
   constructor(projectId?: string, options?: MuleOptions) {
     this.projectId = projectId || Deno.env.get("MULE_PROJECT_ID") || "unknown";
+    this.defaultModel = options?.defaultModel;
+    this.cacheEnabled = options?.cache?.enabled ?? false;
 
     if (this.projectId === "unknown") {
       console.warn(
@@ -420,8 +431,38 @@ class Mule {
     // Inject configuration
     workflow.projectId = this.projectId;
     workflow.logger = this.loggingEnabled ? this.logger : null;
+    workflow.defaultModel = this.defaultModel;
+    workflow.cacheRepository = this.cacheEnabled ? this.repository : null;
 
     return workflow;
+  }
+
+  /**
+   * Clear cache for this project or all cache
+   */
+  async clearCache(projectId?: string): Promise<void> {
+    if (!this.repository) {
+      console.warn("[Mule] No repository available for cache clearing");
+      return;
+    }
+
+    if (projectId) {
+      await this.repository.clearCacheByProjectId(projectId);
+    } else {
+      await this.repository.clearCacheByProjectId(this.projectId);
+    }
+  }
+
+  /**
+   * Clear all cache entries (use with caution)
+   */
+  async clearAllCache(): Promise<void> {
+    if (!this.repository) {
+      console.warn("[Mule] No repository available for cache clearing");
+      return;
+    }
+
+    await this.repository.clearAllCache();
   }
 }
 
