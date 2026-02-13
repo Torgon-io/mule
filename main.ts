@@ -155,27 +155,28 @@ class Workflow<
     initialInput?: TInitialInput,  // ← CORRECTED: Uses TInitialInput
     initialState?: Record<string, unknown>
   ): Promise<TCurrentOutput> {
+    // IMPORTANT: Reset state at the start of each run to prevent pollution from previous runs.
+    // Workflow instances are often reused (especially when exported as singletons or used as
+    // nested workflows), so we must ensure clean state for each execution.
+    const defaultState = {} as TState;
+
     // Handle both old signature (positional params) and new signature (named params)
     if (typeof paramsOrRunId === 'string' || paramsOrRunId === undefined) {
       // Old signature: run(runId?, initialInput?, initialState?)
       this.runId = paramsOrRunId || crypto.randomUUID();
-      if (initialInput !== undefined) {
-        this.lastOutput = initialInput;
-      }
-      if (initialState !== undefined) {
-        // Shallow merge: initialState values override existing state values
-        this.state = { ...this.state, ...initialState };
-      }
+      this.lastOutput = initialInput !== undefined ? initialInput : null;
+      // Reset to default state, then merge initialState if provided
+      this.state = initialState !== undefined
+        ? { ...defaultState, ...initialState }
+        : defaultState;
     } else {
       // New signature: run({ runId?, initialInput?, initialState? })
       this.runId = paramsOrRunId.runId || crypto.randomUUID();
-      if (paramsOrRunId.initialInput !== undefined) {
-        this.lastOutput = paramsOrRunId.initialInput;
-      }
-      if (paramsOrRunId.initialState !== undefined) {
-        // Shallow merge: initialState values override existing state values
-        this.state = { ...this.state, ...paramsOrRunId.initialState };
-      }
+      this.lastOutput = paramsOrRunId.initialInput !== undefined ? paramsOrRunId.initialInput : null;
+      // Reset to default state, then merge initialState if provided
+      this.state = paramsOrRunId.initialState !== undefined
+        ? { ...defaultState, ...paramsOrRunId.initialState }
+        : defaultState;
     }
 
     for (const stepFn of this.steps) {
