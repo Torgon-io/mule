@@ -7,7 +7,11 @@ import {
   type StepExecutionRepository,
 } from "./persistence.ts";
 import { SQLiteRepository } from "./sqlite-repository.ts";
-import { getStepRetries } from "./lib.ts";
+import {
+  getMaxParallelSteps,
+  getStepRetries,
+  runWithConcurrencyLimit,
+} from "./lib.ts";
 
 // Re-export types for convenience
 export type { Logger, LLMCallLog, MuleOptions, ModelMessage };
@@ -199,16 +203,15 @@ class Workflow<
     this.steps.push(async () => {
       // Generate a unique execution group for this parallel batch
       const executionGroup = crypto.randomUUID();
-
-      const results = await Promise.all(
-        steps.map((step) =>
-          this.runStepExecution(step, this.lastOutput, {
-            ...this.executionContext,
-            executionGroup,
-            executionType: "parallel",
-          })
-        )
+      const maxParallel = getMaxParallelSteps();
+      const taskFns = steps.map((step) => () =>
+        this.runStepExecution(step, this.lastOutput, {
+          ...this.executionContext,
+          executionGroup,
+          executionType: "parallel",
+        })
       );
+      const results = await runWithConcurrencyLimit(taskFns, maxParallel);
       this.lastOutput = Object.fromEntries(
         steps.map((s, i) => {
           const key = s instanceof Workflow ? s.workflowId : s.id;
@@ -237,16 +240,15 @@ class Workflow<
 
       // Generate a unique execution group for this branch batch
       const executionGroup = crypto.randomUUID();
-
-      const results = await Promise.all(
-        stepsToRun.map((step) =>
-          this.runStepExecution(step, this.lastOutput, {
-            ...this.executionContext,
-            executionGroup,
-            executionType: "branch",
-          })
-        )
+      const maxParallel = getMaxParallelSteps();
+      const taskFns = stepsToRun.map((step) => () =>
+        this.runStepExecution(step, this.lastOutput, {
+          ...this.executionContext,
+          executionGroup,
+          executionType: "branch",
+        })
       );
+      const results = await runWithConcurrencyLimit(taskFns, maxParallel);
       this.lastOutput = Object.fromEntries(
         stepsToRun.map((s, i) => [s.id, results[i]])
       );
