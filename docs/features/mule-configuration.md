@@ -168,6 +168,47 @@ const mule = new Mule(); // Uses "my-project" from env
 const mule = new Mule(process.env.MULE_PROJECT_ID!);
 ```
 
+### MULE_STEP_RETRIES
+
+When a step fails, Mule can automatically retry it before calling the step’s `onError` or failing the workflow. The number of retries is controlled by the `MULE_STEP_RETRIES` environment variable:
+
+- **Default:** `1` (one retry after the first failure, i.e. at most 2 attempts total).
+- **Set via env:** Any non-negative integer (e.g. `0` to disable retries, `3` for up to 3 retries).
+
+Invalid or negative values fall back to the default of 1.
+
+```bash
+# Default: 1 retry (2 attempts total)
+# MULE_STEP_RETRIES not set
+
+# Disable retries (single attempt only)
+MULE_STEP_RETRIES=0
+
+# Allow 3 retries (4 attempts total)
+MULE_STEP_RETRIES=3
+```
+
+Retries apply to each step execution (including steps inside `parallel` and `branch`). After all attempts fail, the existing error handling runs: nested workflows rethrow, steps with `onError` call it, and others throw with a step id message.
+
+### MULE_STEP_CONCURRENCY
+
+When a workflow runs steps in parallel (via `parallel()` or `branch()`), you can cap how many of those steps run at the same time using the `MULE_STEP_CONCURRENCY` environment variable:
+
+- **Default:** No limit when unset. All steps in a parallel or branch batch run concurrently.
+- **Set via env:** A positive integer. At most that many steps run simultaneously within each parallel or branch batch. Remaining steps start as slots free up.
+
+Invalid, missing, or zero values are treated as “no limit”.
+
+```bash
+# No limit (default): all parallel/branch steps run at once
+# MULE_STEP_CONCURRENCY not set
+
+# Run at most 3 steps at a time in parallel/branch batches
+MULE_STEP_CONCURRENCY=3
+```
+
+The limit applies per batch: each `parallel([...])` or `branch([...])` run at most `MULE_STEP_CONCURRENCY` steps at a time. Nested workflows use the same limit for their own parallel and branch batches. Use this to avoid overloading external APIs or staying within rate or resource limits.
+
 ### Precedence
 
 1. Constructor parameter (highest priority)
