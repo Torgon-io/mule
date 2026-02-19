@@ -171,7 +171,7 @@ export class AIService {
     }
   }
 
-  async generateText(request: GenerateRequest) {
+  async generateText(request: GenerateRequest): Promise<string> {
     return with503Retry(
       async () => {
         const openrouter = this.getOpenRouter();
