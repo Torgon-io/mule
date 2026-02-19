@@ -314,9 +314,10 @@ Deno.test("Workflow - first step with workflow inputSchema", async () => {
   });
 
   const workflow = createWorkflow({ inputSchema: userInputSchema });
-  workflow.lastOutput = { name: "Test User", count: 42 };
 
-  const result = await workflow.addStep(step1).run();
+  const result = await workflow.addStep(step1).run({
+    initialInput: { name: "Test User", count: 42 }
+  });
 
   assertEquals(result, "Test User - 42");
 });
@@ -358,9 +359,10 @@ Deno.test("Workflow - inputSchema with initial state and typed input", async () 
     state: { extraData: "test", userId: "" },
     inputSchema: inputSchema
   });
-  workflow.lastOutput = { userId: "user123", initialValue: 5 };
 
-  const result = await workflow.addStep(step1).addStep(step2).run();
+  const result = await workflow.addStep(step1).addStep(step2).run({
+    initialInput: { userId: "user123", initialValue: 5 }
+  });
 
   assertEquals(result, { userId: "user123", finalValue: 20 });
   assertEquals(workflow.getState().userId, "user123");

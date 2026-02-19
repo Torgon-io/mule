@@ -98,6 +98,9 @@ class Workflow<
   projectId: string = "unknown";
   logger: Logger | null = null;
 
+  // Store the initial state from constructor to reset to on each run
+  private readonly constructorState: TState;
+
   // Execution context for hierarchical tracking
   private executionContext: ExecutionContext = { depth: 0 };
 
@@ -107,6 +110,7 @@ class Workflow<
     inputSchema: z.ZodTypeAny = z.any()
   ) {
     this.workflowId = workflowId;
+    this.constructorState = { ...state };
     this.state = state;
     this.lastOutput = null;
     this.inputSchema = inputSchema;
@@ -158,14 +162,15 @@ class Workflow<
     // IMPORTANT: Reset state at the start of each run to prevent pollution from previous runs.
     // Workflow instances are often reused (especially when exported as singletons or used as
     // nested workflows), so we must ensure clean state for each execution.
-    const defaultState = {} as TState;
+    // Use the constructor state as the default, allowing initialState to override it.
+    const defaultState = { ...this.constructorState };
 
     // Handle both old signature (positional params) and new signature (named params)
     if (typeof paramsOrRunId === 'string' || paramsOrRunId === undefined) {
       // Old signature: run(runId?, initialInput?, initialState?)
       this.runId = paramsOrRunId || crypto.randomUUID();
       this.lastOutput = initialInput !== undefined ? initialInput : null;
-      // Reset to default state, then merge initialState if provided
+      // Reset to constructor state, then merge initialState if provided
       this.state = initialState !== undefined
         ? { ...defaultState, ...initialState }
         : defaultState;
@@ -173,7 +178,7 @@ class Workflow<
       // New signature: run({ runId?, initialInput?, initialState? })
       this.runId = paramsOrRunId.runId || crypto.randomUUID();
       this.lastOutput = paramsOrRunId.initialInput !== undefined ? paramsOrRunId.initialInput : null;
-      // Reset to default state, then merge initialState if provided
+      // Reset to constructor state, then merge initialState if provided
       this.state = paramsOrRunId.initialState !== undefined
         ? { ...defaultState, ...paramsOrRunId.initialState }
         : defaultState;
@@ -277,7 +282,8 @@ class Workflow<
         };
         const output = await step.run({
           runId: `${this.runId}->${step.workflowId}`,
-          initialInput: input
+          initialInput: input,
+          initialState: this.state as Record<string, unknown>
         });
         // Sync state back from nested workflow to parent
         this.state = step.state as TState;
