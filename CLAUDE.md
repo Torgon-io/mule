@@ -39,8 +39,28 @@ deno test --filter "Workflow - single step execution"
 deno task dev
 ```
 
-### Publishing
+### Publishing / Releasing
+
 The package is published to JSR as `@torgon/mule`. Version is managed in [deno.json](deno.json).
+
+**Release Process** (tag-based, automated via GitHub Actions):
+
+1. Update the `version` field in [deno.json](deno.json)
+2. Commit the version bump:
+   ```bash
+   git add deno.json
+   git commit -m "bump version to X.Y.Z"
+   ```
+3. Create and push a version tag:
+   ```bash
+   git tag vX.Y.Z
+   git push origin main --tags
+   ```
+4. GitHub Actions ([.github/workflows/publish.yml](.github/workflows/publish.yml)) will automatically:
+   - Run tests
+   - Publish to JSR if tests pass
+
+**When the user asks to release/publish a new version**, follow this process. Ensure the version in `deno.json` matches the tag being created.
 
 ## Architecture
 
