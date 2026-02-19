@@ -12,6 +12,10 @@ import {
 } from "ai";
 import type { Logger, LLMCallLog } from "./types.ts";
 import { pricingService } from "./pricing.ts";
+import {
+  getRetryAfterWaitMs,
+  with503Retry,
+} from "./lib.ts";
 
 type GenerateRequest = {
   model: string;
@@ -64,6 +68,23 @@ export class AIService {
       });
     }
     return this.openrouter;
+  }
+
+  /**
+   * If error is 503 with Retry-After header, return wait time in ms; else null.
+   */
+  private static get503RetryWaitMs(error: unknown): number | null {
+    if (
+      error &&
+      typeof error === "object" &&
+      (error as { statusCode?: number }).statusCode === 503
+    ) {
+      const err = error as {
+        responseHeaders?: Headers | Record<string, string>;
+      };
+      return getRetryAfterWaitMs(err.responseHeaders);
+    }
+    return null;
   }
 
   private async storeRequestMetadata(
@@ -150,16 +171,21 @@ export class AIService {
     }
   }
 
-  async generateText(request: GenerateRequest): Promise<string> {
-    const openrouter = this.getOpenRouter();
-    const startTime = Date.now();
-    const response = await generateText({
-      ...request,
-      model: openrouter(request.model),
-    });
-    const duration = Date.now() - startTime;
-    this.storeRequestMetadata(request, response, duration, response.text);
-    return response.text;
+  async generateText(request: GenerateRequest) {
+    return with503Retry(
+      async () => {
+        const openrouter = this.getOpenRouter();
+        const startTime = Date.now();
+        const response = await generateText({
+          ...request,
+          model: openrouter(request.model),
+        });
+        const duration = Date.now() - startTime;
+        this.storeRequestMetadata(request, response, duration, response.text);
+        return response.text;
+      },
+      (err) => AIService.get503RetryWaitMs(err)
+    );
   }
 
   async generateObject<T>(request: GenerateObjectRequest): Promise<T> {
@@ -167,31 +193,36 @@ export class AIService {
       throw new Error("Schema required for structured output");
     }
 
-    const openrouter = this.getOpenRouter();
-    try {
-      const startTime = Date.now();
-      const reponse = await generateObject({
-        ...request,
-        model: openrouter(request.model),
-      });
-      const duration = Date.now() - startTime;
-      this.storeRequestMetadata(request, reponse, duration, reponse.object);
+    return with503Retry(
+      async () => {
+        const openrouter = this.getOpenRouter();
+        try {
+          const startTime = Date.now();
+          const reponse = await generateObject({
+            ...request,
+            model: openrouter(request.model),
+          });
+          const duration = Date.now() - startTime;
+          this.storeRequestMetadata(request, reponse, duration, reponse.object);
 
-      return reponse.object as T;
-    } catch (error) {
-      if (NoObjectGeneratedError.isInstance(error)) {
-        console.error("NoObjectGeneratedError:");
-        console.error("Cause:", error.cause);
-        console.error("Text:", error.text);
-        console.error("Response:", error.response);
-        console.error("Usage:", error.usage);
-        console.error("Finish Reason:", error.finishReason);
-      }
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      console.error(`[OpenRouter] Error:`, errorMessage);
-      console.error(`[OpenRouter] Error details:`, error);
-      throw error;
-    }
+          return reponse.object as T;
+        } catch (error) {
+          if (NoObjectGeneratedError.isInstance(error)) {
+            console.error("NoObjectGeneratedError:");
+            console.error("Cause:", error.cause);
+            console.error("Text:", error.text);
+            console.error("Response:", error.response);
+            console.error("Usage:", error.usage);
+            console.error("Finish Reason:", error.finishReason);
+          }
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          console.error(`[OpenRouter] Error:`, errorMessage);
+          console.error(`[OpenRouter] Error details:`, error);
+          throw error;
+        }
+      },
+      (err) => AIService.get503RetryWaitMs(err)
+    );
   }
 }

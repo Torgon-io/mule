@@ -7,6 +7,11 @@ import {
   type StepExecutionRepository,
 } from "./persistence.ts";
 import { SQLiteRepository } from "./sqlite-repository.ts";
+import {
+  getMaxParallelSteps,
+  getStepRetries,
+  runWithConcurrencyLimit,
+} from "./lib.ts";
 
 // Re-export types for convenience
 export type { Logger, LLMCallLog, MuleOptions, ModelMessage };
@@ -204,16 +209,15 @@ class Workflow<
     this.steps.push(async () => {
       // Generate a unique execution group for this parallel batch
       const executionGroup = crypto.randomUUID();
-
-      const results = await Promise.all(
-        steps.map((step) =>
-          this.runStepExecution(step, this.lastOutput, {
-            ...this.executionContext,
-            executionGroup,
-            executionType: "parallel",
-          })
-        )
+      const maxParallel = getMaxParallelSteps();
+      const taskFns = steps.map((step) => () =>
+        this.runStepExecution(step, this.lastOutput, {
+          ...this.executionContext,
+          executionGroup,
+          executionType: "parallel",
+        })
       );
+      const results = await runWithConcurrencyLimit(taskFns, maxParallel);
       this.lastOutput = Object.fromEntries(
         steps.map((s, i) => {
           const key = s instanceof Workflow ? s.workflowId : s.id;
@@ -242,16 +246,15 @@ class Workflow<
 
       // Generate a unique execution group for this branch batch
       const executionGroup = crypto.randomUUID();
-
-      const results = await Promise.all(
-        stepsToRun.map((step) =>
-          this.runStepExecution(step, this.lastOutput, {
-            ...this.executionContext,
-            executionGroup,
-            executionType: "branch",
-          })
-        )
+      const maxParallel = getMaxParallelSteps();
+      const taskFns = stepsToRun.map((step) => () =>
+        this.runStepExecution(step, this.lastOutput, {
+          ...this.executionContext,
+          executionGroup,
+          executionType: "branch",
+        })
       );
+      const results = await runWithConcurrencyLimit(taskFns, maxParallel);
       this.lastOutput = Object.fromEntries(
         stepsToRun.map((s, i) => [s.id, results[i]])
       );
@@ -264,69 +267,76 @@ class Workflow<
     input: any,
     context: ExecutionContext
   ) {
-    console.log(
-      `[Workflow ${this.runId}] Executing step: ${
-        step instanceof Workflow ? `Workflow(${step.workflowId})` : step.id
-      }`
-    );
-    try {
-      if (step instanceof Workflow) {
-        step.state = this.state;
-        // Nested workflow inherits parent config and execution context
-        step.projectId = this.projectId;
-        step.logger = this.logger;
-        step.executionContext = {
-          ...context,
-          parentStepId: step.workflowId,
-          depth: context.depth + 1,
+    const maxRetries = getStepRetries();
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      console.log(
+        `[Workflow ${this.runId}] Executing step: ${
+          step instanceof Workflow ? `Workflow(${step.workflowId})` : step.id
+        }${attempt > 0 ? ` (retry ${attempt}/${maxRetries})` : ""}`
+      );
+      try {
+        if (step instanceof Workflow) {
+          step.state = this.state;
+          // Nested workflow inherits parent config and execution context
+          step.projectId = this.projectId;
+          step.logger = this.logger;
+          step.executionContext = {
+            ...context,
+            parentStepId: step.workflowId,
+            depth: context.depth + 1,
+          };
+          const output = await step.run({
+            runId: `${this.runId}->${step.workflowId}`,
+            initialInput: input,
+            initialState: this.state as Record<string, unknown>
+          });
+          // Sync state back from nested workflow to parent
+          this.state = step.state as TState;
+          return output;
+        }
+        // Create setState function that merges partial state updates
+        const setState = (newState: Partial<TState>) => {
+          this.state = { ...this.state, ...newState };
         };
-        const output = await step.run({
-          runId: `${this.runId}->${step.workflowId}`,
-          initialInput: input,
-          initialState: this.state as Record<string, unknown>
+
+        const output = await step.executor({
+          input,
+          state: this.state,
+          setState,
+          ai: new AIService({
+            projectId: this.projectId,
+            workflowId: this.workflowId,
+            runId: this.runId,
+            stepId: step.id,
+            logger: this.logger,
+
+            // Pass execution context to AIService
+            parentStepId: context.parentStepId,
+            executionGroup: context.executionGroup,
+            executionType: context.executionType,
+            depth: context.depth,
+          }),
         });
-        // Sync state back from nested workflow to parent
-        this.state = step.state as TState;
         return output;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt < maxRetries) continue;
+        break;
       }
-      // Create setState function that merges partial state updates
-      const setState = (newState: Partial<TState>) => {
-        this.state = { ...this.state, ...newState };
-      };
+    }
 
-      const output = await step.executor({
-        input,
-        state: this.state,
-        setState,
-        ai: new AIService({
-          projectId: this.projectId,
-          workflowId: this.workflowId,
-          runId: this.runId,
-          stepId: step.id,
-          logger: this.logger,
-
-          // Pass execution context to AIService
-          parentStepId: context.parentStepId,
-          executionGroup: context.executionGroup,
-          executionType: context.executionType,
-          depth: context.depth,
-        }),
-      });
-      return output;
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      if (step instanceof Workflow) {
-        // For nested workflows, re-throw the error to propagate it up
-        throw err;
-      } else if (step.onError) {
-        await step.onError(err, { input, state: this.state });
-        // Return undefined when error is handled - workflow continues but with no output
-        return undefined;
-      } else {
-        throw new Error(
-          `Step '${this.runId}:${step.id}' failed: ${err.message}`
-        );
-      }
+    const err = lastError!;
+    if (step instanceof Workflow) {
+      throw err;
+    } else if (step.onError) {
+      await step.onError(err, { input, state: this.state });
+      return undefined;
+    } else {
+      throw new Error(
+        `Step '${this.runId}:${step.id}' failed: ${err.message}`
+      );
     }
   }
 }
