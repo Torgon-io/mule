@@ -1353,3 +1353,63 @@ Deno.test("Mule - persistence throws error for unimplemented backends", () => {
   }
   assertEquals(errorThrown, true);
 });
+
+Deno.test("Workflow - concurrent executions are isolated (race condition fix)", async () => {
+  // This test verifies that concurrent executions of the same workflow
+  // don't interfere with each other's state.
+  const mule = new Mule("test-project", { persistence: false });
+
+  const workflow = mule.createWorkflow({
+    id: "concurrent-test",
+    inputSchema: z.object({ id: z.string() }),
+  });
+
+  // Step that stores input ID in state and returns it after a delay
+  workflow.addStep(createStep({
+    id: "store-id",
+    inputSchema: z.object({ id: z.string() }),
+    stateSchema: z.object({ storedId: z.string().optional() }),
+    outputSchema: z.object({ id: z.string() }),
+    executor: async ({ input, setState }) => {
+      setState({ storedId: input.id });
+      // Add a small delay to increase chance of race condition if bug exists
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return { id: input.id };
+    },
+  }));
+
+  // Step that reads from state and verifies it matches
+  workflow.addStep(createStep({
+    id: "verify-id",
+    inputSchema: z.object({ id: z.string() }),
+    stateSchema: z.object({ storedId: z.string().optional() }),
+    outputSchema: z.object({ id: z.string(), storedId: z.string() }),
+    executor: async ({ input, state }) => {
+      // Add another delay
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return { id: input.id, storedId: state.storedId || "missing" };
+    },
+  }));
+
+  // Run multiple concurrent executions with different IDs
+  const results = await Promise.all([
+    workflow.run({ initialInput: { id: "exec-1" } }),
+    workflow.run({ initialInput: { id: "exec-2" } }),
+    workflow.run({ initialInput: { id: "exec-3" } }),
+    workflow.run({ initialInput: { id: "exec-4" } }),
+    workflow.run({ initialInput: { id: "exec-5" } }),
+  ]) as Array<{ id: string; storedId: string }>;
+
+  // Verify each execution maintained its own state
+  // Without the fix, states would leak between executions
+  assertEquals(results[0].id, "exec-1");
+  assertEquals(results[0].storedId, "exec-1");
+  assertEquals(results[1].id, "exec-2");
+  assertEquals(results[1].storedId, "exec-2");
+  assertEquals(results[2].id, "exec-3");
+  assertEquals(results[2].storedId, "exec-3");
+  assertEquals(results[3].id, "exec-4");
+  assertEquals(results[3].storedId, "exec-4");
+  assertEquals(results[4].id, "exec-5");
+  assertEquals(results[4].storedId, "exec-5");
+});
