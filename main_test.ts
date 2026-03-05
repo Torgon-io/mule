@@ -1413,3 +1413,264 @@ Deno.test("Workflow - concurrent executions are isolated (race condition fix)", 
   assertEquals(results[4].id, "exec-5");
   assertEquals(results[4].storedId, "exec-5");
 });
+
+Deno.test("Workflow - no initiative data leakage with nested workflows (simulates production bug)", async () => {
+  // This test simulates the exact production bug scenario:
+  // - A parent workflow passes initiativeId in state to a nested workflow
+  // - The nested workflow uses state.initiativeId to fetch/cache data
+  // - Concurrent executions should never see another execution's initiativeId
+  
+  const mule = new Mule("test-project", { persistence: false });
+
+  // Simulate the nested workflow (like generateDocumentationAnalysis)
+  // It reads initiativeId from state and "fetches" data based on it
+  const nestedWorkflow = mule.createWorkflow({
+    id: "nested-doc-analysis",
+    inputSchema: z.object({ sourceDoc: z.string() }),
+  });
+
+  // Track all initiativeIds seen during execution to detect leakage
+  const seenInitiativeIds: Map<string, string[]> = new Map();
+
+  nestedWorkflow.addStep(createStep({
+    id: "check-cache",
+    inputSchema: z.object({ sourceDoc: z.string() }),
+    stateSchema: z.object({
+      initiativeId: z.string(),
+      useCache: z.boolean().optional(),
+    }),
+    outputSchema: z.object({ analysis: z.string(), initiativeId: z.string() }),
+    executor: async ({ input, state }) => {
+      // Simulate async operation (like checking cache or calling LLM)
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 20));
+      
+      // Record which initiativeId this execution saw
+      const execId = input.sourceDoc; // Using sourceDoc as execution identifier
+      if (!seenInitiativeIds.has(execId)) {
+        seenInitiativeIds.set(execId, []);
+      }
+      seenInitiativeIds.get(execId)!.push(state.initiativeId);
+      
+      // Simulate more async work
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 20));
+      
+      // Return the initiativeId we saw - if there's leakage, this won't match
+      return {
+        analysis: `Analysis for ${state.initiativeId}`,
+        initiativeId: state.initiativeId,
+      };
+    },
+  }));
+
+  // Parent workflow (like generateReportWorkflow)
+  const parentWorkflow = mule.createWorkflow({
+    id: "parent-report",
+    inputSchema: z.object({ initiativeId: z.string() }),
+  });
+
+  parentWorkflow.addStep(createStep({
+    id: "load-context",
+    inputSchema: z.object({ initiativeId: z.string() }),
+    stateSchema: z.object({
+      initiativeId: z.string().optional(),
+      useCache: z.boolean().optional(),
+    }),
+    outputSchema: z.object({ sourceDoc: z.string() }),
+    executor: async ({ input, setState }) => {
+      // Store initiativeId in state (like the real workflow does)
+      setState({ initiativeId: input.initiativeId, useCache: true });
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 10));
+      return { sourceDoc: `doc-${input.initiativeId}` };
+    },
+  }));
+
+  // Add nested workflow as a step
+  parentWorkflow.addStep(nestedWorkflow as any);
+
+  (parentWorkflow as any).addStep(createStep({
+    id: "verify-result",
+    inputSchema: z.object({ analysis: z.string(), initiativeId: z.string() }),
+    stateSchema: z.object({ initiativeId: z.string().optional() }),
+    outputSchema: z.object({
+      analysis: z.string(),
+      stateInitiativeId: z.string(),
+      resultInitiativeId: z.string(),
+    }),
+    executor: async ({ input, state }) => {
+      return {
+        analysis: input.analysis,
+        stateInitiativeId: state.initiativeId || "missing",
+        resultInitiativeId: input.initiativeId,
+      };
+    },
+  }));
+
+  // Run 10 concurrent executions with different initiative IDs
+  const initiativeIds = [
+    "init-groningen-001",
+    "init-amsterdam-002", 
+    "init-rotterdam-003",
+    "init-utrecht-004",
+    "init-eindhoven-005",
+    "init-denhaag-006",
+    "init-tilburg-007",
+    "init-almere-008",
+    "init-breda-009",
+    "init-nijmegen-010",
+  ];
+
+  const results = await Promise.all(
+    initiativeIds.map(id =>
+      parentWorkflow.run({
+        initialInput: { initiativeId: id },
+        initialState: { initiativeId: id },
+      })
+    )
+  ) as unknown as Array<{ analysis: string; stateInitiativeId: string; resultInitiativeId: string }>;
+
+  // Verify NO data leakage occurred
+  for (let i = 0; i < initiativeIds.length; i++) {
+    const expectedId = initiativeIds[i];
+    const result = results[i];
+    
+    // The state's initiativeId should match what we passed in
+    assertEquals(
+      result.stateInitiativeId, 
+      expectedId,
+      `State leakage detected! Expected ${expectedId} but got ${result.stateInitiativeId}`
+    );
+    
+    // The nested workflow's result should also match
+    assertEquals(
+      result.resultInitiativeId,
+      expectedId,
+      `Result leakage detected! Expected ${expectedId} but got ${result.resultInitiativeId}`
+    );
+    
+    // The analysis should reference the correct initiative
+    assertEquals(
+      result.analysis.includes(expectedId),
+      true,
+      `Analysis doesn't reference correct initiative: ${result.analysis}`
+    );
+  }
+
+  // Additional check: verify each execution only ever saw its own initiativeId
+  for (const [execId, ids] of seenInitiativeIds.entries()) {
+    const expectedInitiativeId = execId.replace("doc-", "");
+    for (const seenId of ids) {
+      assertEquals(
+        seenId,
+        expectedInitiativeId,
+        `Execution ${execId} saw wrong initiativeId: expected ${expectedInitiativeId}, saw ${seenId}`
+      );
+    }
+  }
+});
+
+Deno.test("Workflow - state isolation under heavy concurrent load", async () => {
+  // Stress test with many concurrent executions to catch subtle race conditions
+  const mule = new Mule("stress-test", { persistence: false });
+
+  const workflow = mule.createWorkflow({
+    id: "stress-test-workflow",
+    inputSchema: z.object({ id: z.number() }),
+  });
+
+  // Step 1: Store ID in state
+  workflow.addStep(createStep({
+    id: "step1",
+    inputSchema: z.object({ id: z.number() }),
+    stateSchema: z.object({ 
+      originalId: z.number().optional(),
+      checkpoints: z.array(z.number()).optional(),
+    }),
+    outputSchema: z.object({ id: z.number() }),
+    executor: async ({ input, state, setState }) => {
+      setState({ 
+        originalId: input.id, 
+        checkpoints: [input.id] 
+      });
+      // Random delay to increase interleaving
+      await new Promise(r => setTimeout(r, Math.random() * 5));
+      return { id: input.id };
+    },
+  }));
+
+  // Step 2: Verify and update state
+  workflow.addStep(createStep({
+    id: "step2",
+    inputSchema: z.object({ id: z.number() }),
+    stateSchema: z.object({ 
+      originalId: z.number().optional(),
+      checkpoints: z.array(z.number()).optional(),
+    }),
+    outputSchema: z.object({ id: z.number(), checkpoint2: z.number() }),
+    executor: async ({ input, state, setState }) => {
+      await new Promise(r => setTimeout(r, Math.random() * 5));
+      setState({ 
+        checkpoints: [...(state.checkpoints || []), state.originalId ?? -1] 
+      });
+      return { id: input.id, checkpoint2: state.originalId ?? -1 };
+    },
+  }));
+
+  // Step 3: Final verification
+  (workflow as any).addStep(createStep({
+    id: "step3",
+    inputSchema: z.object({ id: z.number(), checkpoint2: z.number() }),
+    stateSchema: z.object({
+      originalId: z.number().optional(),
+      checkpoints: z.array(z.number()).optional(),
+    }),
+    outputSchema: z.object({
+      inputId: z.number(),
+      stateId: z.number(),
+      checkpoints: z.array(z.number()),
+      allMatch: z.boolean(),
+    }),
+    executor: async ({ input, state }) => {
+      await new Promise(r => setTimeout(r, Math.random() * 5));
+      const checkpoints = state.checkpoints || [];
+      const allMatch = checkpoints.every(cp => cp === state.originalId);
+      return {
+        inputId: input.id,
+        stateId: state.originalId ?? -1,
+        checkpoints,
+        allMatch,
+      };
+    },
+  }));
+
+  // Run 50 concurrent executions
+  const numExecutions = 50;
+  const promises = [];
+  for (let i = 0; i < numExecutions; i++) {
+    promises.push(workflow.run({ initialInput: { id: i } }));
+  }
+
+  const results = await Promise.all(promises) as unknown as Array<{
+    inputId: number;
+    stateId: number;
+    checkpoints: number[];
+    allMatch: boolean;
+  }>;
+
+  // Verify every execution maintained state isolation
+  let leakageCount = 0;
+  for (let i = 0; i < numExecutions; i++) {
+    const result = results[i];
+    
+    if (result.inputId !== result.stateId) {
+      console.error(`Leakage in execution ${i}: input=${result.inputId}, state=${result.stateId}`);
+      leakageCount++;
+    }
+    
+    if (!result.allMatch) {
+      console.error(`Checkpoint mismatch in execution ${i}: checkpoints=${result.checkpoints}`);
+      leakageCount++;
+    }
+  }
+
+  assertEquals(leakageCount, 0, `Detected ${leakageCount} instances of state leakage`);
+});
