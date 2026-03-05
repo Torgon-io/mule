@@ -88,6 +88,24 @@ interface ExecutionContext {
   depth: number;
 }
 
+/**
+ * Runtime context for a single workflow execution.
+ * This ensures concurrent executions don't interfere with each other.
+ */
+interface RuntimeContext<TState> {
+  state: TState;
+  lastOutput: any;
+  runId: string;
+}
+
+/**
+ * Step definition stored for later execution
+ */
+type StepDefinition<TState> =
+  | { type: "sequential"; step: Step<any, any, any> | Workflow<any, any, any> }
+  | { type: "parallel"; steps: Step<any, any, any>[] }
+  | { type: "branch"; conditionalSteps: [Step<any, any, any>, (output: any) => boolean][] };
+
 class Workflow<
   TCurrentOutput = undefined,
   TState = Record<string, unknown>,
@@ -97,7 +115,7 @@ class Workflow<
   state: TState;
   lastOutput: any = null;
   inputSchema: z.ZodTypeAny;
-  private steps: Array<() => Promise<void>> = [];
+  private stepDefinitions: Array<StepDefinition<TState>> = [];
   runId: string = "";
   readonly workflowId: string;
   projectId: string = "unknown";
@@ -146,12 +164,7 @@ class Workflow<
     step: Step<TCurrentOutput, TOutput, TStepState> | Workflow<TOutput, any, any>
   ): Workflow<TOutput, TState & TStepState, TInitialInput> {
     //                                       ^^^^^^^^^^^^^ CORRECTED: Keep TInitialInput unchanged
-    this.steps.push(async () => {
-      this.lastOutput = await this.runStepExecution(step as any, this.lastOutput, {
-        ...this.executionContext,
-        executionType: "sequential",
-      });
-    });
+    this.stepDefinitions.push({ type: "sequential", step: step as any });
     return this as any as Workflow<TOutput, TState & TStepState, TInitialInput>;
   }
 
@@ -164,35 +177,116 @@ class Workflow<
     initialInput?: TInitialInput,  // ← CORRECTED: Uses TInitialInput
     initialState?: Record<string, unknown>
   ): Promise<TCurrentOutput> {
-    // IMPORTANT: Reset state at the start of each run to prevent pollution from previous runs.
-    // Workflow instances are often reused (especially when exported as singletons or used as
-    // nested workflows), so we must ensure clean state for each execution.
-    // Use the constructor state as the default, allowing initialState to override it.
+    // IMPORTANT: Create execution-local runtime context to prevent race conditions.
+    // Workflow instances are often reused (especially when exported as singletons),
+    // so we must ensure each execution has isolated state that won't be affected
+    // by concurrent executions.
     const defaultState = { ...this.constructorState };
+
+    // Create runtime context local to this execution
+    const runtime: RuntimeContext<TState> = {
+      state: defaultState,
+      lastOutput: null,
+      runId: "",
+    };
 
     // Handle both old signature (positional params) and new signature (named params)
     if (typeof paramsOrRunId === 'string' || paramsOrRunId === undefined) {
       // Old signature: run(runId?, initialInput?, initialState?)
-      this.runId = paramsOrRunId || crypto.randomUUID();
-      this.lastOutput = initialInput !== undefined ? initialInput : null;
+      runtime.runId = paramsOrRunId || crypto.randomUUID();
+      runtime.lastOutput = initialInput !== undefined ? initialInput : null;
       // Reset to constructor state, then merge initialState if provided
-      this.state = initialState !== undefined
-        ? { ...defaultState, ...initialState }
+      runtime.state = initialState !== undefined
+        ? { ...defaultState, ...initialState } as TState
         : defaultState;
     } else {
       // New signature: run({ runId?, initialInput?, initialState? })
-      this.runId = paramsOrRunId.runId || crypto.randomUUID();
-      this.lastOutput = paramsOrRunId.initialInput !== undefined ? paramsOrRunId.initialInput : null;
+      runtime.runId = paramsOrRunId.runId || crypto.randomUUID();
+      runtime.lastOutput = paramsOrRunId.initialInput !== undefined ? paramsOrRunId.initialInput : null;
       // Reset to constructor state, then merge initialState if provided
-      this.state = paramsOrRunId.initialState !== undefined
-        ? { ...defaultState, ...paramsOrRunId.initialState }
+      runtime.state = paramsOrRunId.initialState !== undefined
+        ? { ...defaultState, ...paramsOrRunId.initialState } as TState
         : defaultState;
     }
 
-    for (const stepFn of this.steps) {
-      await stepFn();
+    // Execute all step definitions with the runtime context
+    for (const stepDef of this.stepDefinitions) {
+      await this.executeStepDefinition(stepDef, runtime);
     }
-    return this.lastOutput;
+
+    // Update instance properties for backward compatibility (getState, getOutput)
+    this.state = runtime.state;
+    this.lastOutput = runtime.lastOutput;
+    this.runId = runtime.runId;
+
+    return runtime.lastOutput;
+  }
+
+  /**
+   * Execute a step definition with the given runtime context.
+   * This keeps state isolated per execution to prevent race conditions.
+   */
+  private async executeStepDefinition(
+    stepDef: StepDefinition<TState>,
+    runtime: RuntimeContext<TState>
+  ): Promise<void> {
+    switch (stepDef.type) {
+      case "sequential": {
+        runtime.lastOutput = await this.runStepExecution(
+          stepDef.step,
+          runtime.lastOutput,
+          { ...this.executionContext, executionType: "sequential" },
+          runtime
+        );
+        break;
+      }
+      case "parallel": {
+        const executionGroup = crypto.randomUUID();
+        const maxParallel = getMaxParallelSteps();
+        const taskFns = stepDef.steps.map((step) => () =>
+          this.runStepExecution(
+            step,
+            runtime.lastOutput,
+            { ...this.executionContext, executionGroup, executionType: "parallel" },
+            runtime
+          )
+        );
+        const results = await runWithConcurrencyLimit(taskFns, maxParallel);
+        runtime.lastOutput = Object.fromEntries(
+          stepDef.steps.map((s, i) => {
+            const key = s instanceof Workflow ? s.workflowId : s.id;
+            return [key, results[i]];
+          })
+        );
+        break;
+      }
+      case "branch": {
+        const stepsToRun = stepDef.conditionalSteps
+          .filter(([_, condition]) => condition(runtime.lastOutput))
+          .map(([step]) => step);
+
+        if (stepsToRun.length === 0) {
+          runtime.lastOutput = {};
+          break;
+        }
+
+        const executionGroup = crypto.randomUUID();
+        const maxParallel = getMaxParallelSteps();
+        const taskFns = stepsToRun.map((step) => () =>
+          this.runStepExecution(
+            step,
+            runtime.lastOutput,
+            { ...this.executionContext, executionGroup, executionType: "branch" },
+            runtime
+          )
+        );
+        const results = await runWithConcurrencyLimit(taskFns, maxParallel);
+        runtime.lastOutput = Object.fromEntries(
+          stepsToRun.map((s, i) => [s.id, results[i]])
+        );
+        break;
+      }
+    }
   }
 
   getOutput(): TCurrentOutput {
@@ -206,25 +300,7 @@ class Workflow<
   parallel<TSteps extends readonly Step<TCurrentOutput, any, any, any>[]>(
     steps: [...TSteps]
   ): Workflow<any, TState, TInitialInput> {  // ← CORRECTED: Preserve TInitialInput
-    this.steps.push(async () => {
-      // Generate a unique execution group for this parallel batch
-      const executionGroup = crypto.randomUUID();
-      const maxParallel = getMaxParallelSteps();
-      const taskFns = steps.map((step) => () =>
-        this.runStepExecution(step, this.lastOutput, {
-          ...this.executionContext,
-          executionGroup,
-          executionType: "parallel",
-        })
-      );
-      const results = await runWithConcurrencyLimit(taskFns, maxParallel);
-      this.lastOutput = Object.fromEntries(
-        steps.map((s, i) => {
-          const key = s instanceof Workflow ? s.workflowId : s.id;
-          return [key, results[i]];
-        })
-      );
-    });
+    this.stepDefinitions.push({ type: "parallel", steps: steps as any });
     return this as any as Workflow<any, TState, TInitialInput>;
   }
 
@@ -234,51 +310,27 @@ class Workflow<
       condition: (output: TCurrentOutput) => boolean
     ][]
   ): Workflow<any, TState, TInitialInput> {  // ← CORRECTED: Preserve TInitialInput
-    this.steps.push(async () => {
-      const stepsToRun = conditionalSteps
-        .filter(([_, condition]) => condition(this.lastOutput))
-        .map(([step]) => step);
-
-      if (stepsToRun.length === 0) {
-        this.lastOutput = {};
-        return;
-      }
-
-      // Generate a unique execution group for this branch batch
-      const executionGroup = crypto.randomUUID();
-      const maxParallel = getMaxParallelSteps();
-      const taskFns = stepsToRun.map((step) => () =>
-        this.runStepExecution(step, this.lastOutput, {
-          ...this.executionContext,
-          executionGroup,
-          executionType: "branch",
-        })
-      );
-      const results = await runWithConcurrencyLimit(taskFns, maxParallel);
-      this.lastOutput = Object.fromEntries(
-        stepsToRun.map((s, i) => [s.id, results[i]])
-      );
-    });
+    this.stepDefinitions.push({ type: "branch", conditionalSteps: conditionalSteps as any });
     return this as any as Workflow<any, TState, TInitialInput>;
   }
 
   private async runStepExecution(
     step: Step<any, any, any> | Workflow<any, any, any>,
     input: any,
-    context: ExecutionContext
+    context: ExecutionContext,
+    runtime: RuntimeContext<TState>
   ) {
     const maxRetries = getStepRetries();
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       console.log(
-        `[Workflow ${this.runId}] Executing step: ${
+        `[Workflow ${runtime.runId}] Executing step: ${
           step instanceof Workflow ? `Workflow(${step.workflowId})` : step.id
         }${attempt > 0 ? ` (retry ${attempt}/${maxRetries})` : ""}`
       );
       try {
         if (step instanceof Workflow) {
-          step.state = this.state;
           // Nested workflow inherits parent config and execution context
           step.projectId = this.projectId;
           step.logger = this.logger;
@@ -288,27 +340,27 @@ class Workflow<
             depth: context.depth + 1,
           };
           const output = await step.run({
-            runId: `${this.runId}->${step.workflowId}`,
+            runId: `${runtime.runId}->${step.workflowId}`,
             initialInput: input,
-            initialState: this.state as Record<string, unknown>
+            initialState: runtime.state as Record<string, unknown>
           });
-          // Sync state back from nested workflow to parent
-          this.state = step.state as TState;
+          // Sync state back from nested workflow to parent runtime context
+          runtime.state = step.state as TState;
           return output;
         }
-        // Create setState function that merges partial state updates
+        // Create setState function that merges partial state updates into runtime context
         const setState = (newState: Partial<TState>) => {
-          this.state = { ...this.state, ...newState };
+          runtime.state = { ...runtime.state, ...newState };
         };
 
         const output = await step.executor({
           input,
-          state: this.state,
+          state: runtime.state,
           setState,
           ai: new AIService({
             projectId: this.projectId,
             workflowId: this.workflowId,
-            runId: this.runId,
+            runId: runtime.runId,
             stepId: step.id,
             logger: this.logger,
 
@@ -331,11 +383,11 @@ class Workflow<
     if (step instanceof Workflow) {
       throw err;
     } else if (step.onError) {
-      await step.onError(err, { input, state: this.state });
+      await step.onError(err, { input, state: runtime.state });
       return undefined;
     } else {
       throw new Error(
-        `Step '${this.runId}:${step.id}' failed: ${err.message}`
+        `Step '${runtime.runId}:${step.id}' failed: ${err.message}`
       );
     }
   }
