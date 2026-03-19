@@ -23,6 +23,7 @@ type GenerateRequest = {
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
+  timeoutMs?: number; // Timeout in milliseconds (default: 5 minutes)
 };
 
 type GenerateObjectRequest = GenerateRequest & {
@@ -85,6 +86,50 @@ export class AIService {
       return getRetryAfterWaitMs(err.responseHeaders);
     }
     return null;
+  }
+
+  /**
+   * Log detailed error information from AI SDK errors.
+   * AI SDK errors often contain nested details that are lost with just .message
+   */
+  private logDetailedError(error: unknown): void {
+    if (!error || typeof error !== "object") {
+      console.error(`[OpenRouter] Error (non-object):`, error);
+      return;
+    }
+
+    const err = error as Record<string, unknown>;
+    console.error(`[OpenRouter] Error message:`, err.message);
+    console.error(`[OpenRouter] Error name:`, err.name);
+
+    // Common AI SDK error properties
+    if ("statusCode" in err) console.error(`[OpenRouter] Status code:`, err.statusCode);
+    if ("cause" in err) console.error(`[OpenRouter] Cause:`, err.cause);
+    if ("data" in err) console.error(`[OpenRouter] Data:`, JSON.stringify(err.data, null, 2));
+    if ("responseBody" in err) console.error(`[OpenRouter] Response body:`, err.responseBody);
+    if ("url" in err) console.error(`[OpenRouter] URL:`, err.url);
+
+    // OpenRouter specific
+    if ("error" in err && typeof err.error === "object" && err.error !== null) {
+      const providerError = err.error as Record<string, unknown>;
+      console.error(`[OpenRouter] Provider error:`, JSON.stringify(providerError, null, 2));
+    }
+
+    // Log full error object for debugging (might be verbose but helpful)
+    try {
+      const errorKeys = Object.keys(err);
+      console.error(`[OpenRouter] Error keys:`, errorKeys);
+      // Try to serialize the full error
+      const serialized = JSON.stringify(err, (_key, value) => {
+        if (value instanceof Error) {
+          return { name: value.name, message: value.message, stack: value.stack };
+        }
+        return value;
+      }, 2);
+      console.error(`[OpenRouter] Full error object:`, serialized);
+    } catch {
+      console.error(`[OpenRouter] Could not serialize full error`);
+    }
   }
 
   private async storeRequestMetadata(
@@ -172,17 +217,59 @@ export class AIService {
   }
 
   async generateText(request: GenerateRequest): Promise<string> {
+    // Default timeout: 10 minutes (600000ms) - large reports may need this
+    const timeoutMs = request.timeoutMs ?? 600000;
+
     return with503Retry(
       async () => {
         const openrouter = this.getOpenRouter();
         const startTime = Date.now();
-        const response = await generateText({
-          ...request,
-          model: openrouter(request.model),
-        });
-        const duration = Date.now() - startTime;
-        this.storeRequestMetadata(request, response, duration, response.text);
-        return response.text;
+
+        console.log(
+          `[OpenRouter] Starting generateText request`,
+          `Model: ${request.model}`,
+          `Timeout: ${timeoutMs / 1000}s`
+        );
+
+        // Create AbortController for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+          controller.abort();
+        }, timeoutMs);
+
+        try {
+          const response = await generateText({
+            model: openrouter(request.model),
+            messages: request.messages,
+            system: request.systemPrompt, // AI SDK uses 'system' not 'systemPrompt'
+            temperature: request.temperature,
+            maxTokens: request.maxTokens,
+            abortSignal: controller.signal,
+          });
+          const duration = Date.now() - startTime;
+          this.storeRequestMetadata(request, response, duration, response.text);
+          return response.text;
+        } catch (error) {
+          const duration = Date.now() - startTime;
+          // Check if this was a timeout abort
+          if (controller.signal.aborted) {
+            console.error(
+              `[OpenRouter] Request timed out after ${duration}ms (limit: ${timeoutMs}ms)`,
+              `Model: ${request.model}`
+            );
+            throw new Error(
+              `LLM request timed out after ${Math.round(duration / 1000)}s. ` +
+                `The request may be too large or the model is overloaded.`
+            );
+          }
+          // Log detailed error information
+          console.error(`[OpenRouter] generateText failed after ${duration}ms`);
+          console.error(`[OpenRouter] Model: ${request.model}`);
+          this.logDetailedError(error);
+          throw error;
+        } finally {
+          clearTimeout(timeoutId);
+        }
       },
       (err) => AIService.get503RetryWaitMs(err)
     );
@@ -193,33 +280,71 @@ export class AIService {
       throw new Error("Schema required for structured output");
     }
 
+    // Default timeout: 10 minutes (600000ms) - large reports may need this
+    const timeoutMs = request.timeoutMs ?? 600000;
+
     return with503Retry(
       async () => {
         const openrouter = this.getOpenRouter();
+        const startTime = Date.now();
+
+        console.log(
+          `[OpenRouter] Starting generateObject request`,
+          `Model: ${request.model}`,
+          `Timeout: ${timeoutMs / 1000}s`,
+          `SystemPrompt length: ${request.systemPrompt?.length ?? 0}`,
+          `Messages: ${request.messages.length}`
+        );
+
+        // Create AbortController for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+          controller.abort();
+        }, timeoutMs);
+
         try {
-          const startTime = Date.now();
-          const reponse = await generateObject({
-            ...request,
+          const response = await generateObject({
             model: openrouter(request.model),
+            messages: request.messages,
+            schema: request.schema,
+            system: request.systemPrompt, // AI SDK uses 'system' not 'systemPrompt'
+            temperature: request.temperature,
+            maxTokens: request.maxTokens,
+            abortSignal: controller.signal,
           });
           const duration = Date.now() - startTime;
-          this.storeRequestMetadata(request, reponse, duration, reponse.object);
+          this.storeRequestMetadata(request, response, duration, response.object);
 
-          return reponse.object as T;
+          return response.object as T;
         } catch (error) {
+          const duration = Date.now() - startTime;
+
+          // Check if this was a timeout abort
+          if (controller.signal.aborted) {
+            console.error(
+              `[OpenRouter] Request timed out after ${duration}ms (limit: ${timeoutMs}ms)`,
+              `Model: ${request.model}`
+            );
+            throw new Error(
+              `LLM request timed out after ${Math.round(duration / 1000)}s. ` +
+                `The request may be too large or the model is overloaded.`
+            );
+          }
+
           if (NoObjectGeneratedError.isInstance(error)) {
             console.error("NoObjectGeneratedError:");
-            console.error("Cause:", error.cause);
-            console.error("Text:", error.text);
-            console.error("Response:", error.response);
-            console.error("Usage:", error.usage);
-            console.error("Finish Reason:", error.finishReason);
+            console.error("Cause:", (error as any).cause);
+            console.error("Text:", (error as any).text);
+            console.error("Response:", (error as any).response);
+            console.error("Usage:", (error as any).usage);
+            console.error("Finish Reason:", (error as any).finishReason);
           }
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          console.error(`[OpenRouter] Error:`, errorMessage);
-          console.error(`[OpenRouter] Error details:`, error);
+          console.error(`[OpenRouter] generateObject failed after ${duration}ms`);
+          console.error(`[OpenRouter] Model: ${request.model}`);
+          this.logDetailedError(error);
           throw error;
+        } finally {
+          clearTimeout(timeoutId);
         }
       },
       (err) => AIService.get503RetryWaitMs(err)
